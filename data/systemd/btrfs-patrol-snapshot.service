@@ -1,0 +1,7 @@
+[Unit]
+Description=Take a scheduled btrfs-patrol snapshot
+Documentation=https://github.com/OWNER/btrfs-patrol
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/btrfs-patrol snapshot --kind timer --description "Scheduled snapshot"

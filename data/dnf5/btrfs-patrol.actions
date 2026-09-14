@@ -1,0 +1,9 @@
+# btrfs-patrol: snapshots around dnf5 transactions. Needs libdnf5-plugin-actions.
+#
+# Format (libdnf5-actions(8)): callback_name:package_filter:direction:options:command
+#
+# The empty package filter runs the command once per transaction.
+# enabled=host-only skips transactions on an --installroot, which don't change
+# this system's root subvolume.
+pre_transaction:::enabled=host-only:/usr/bin/btrfs-patrol dnf-hook pre
+post_transaction:::enabled=host-only:/usr/bin/btrfs-patrol dnf-hook post

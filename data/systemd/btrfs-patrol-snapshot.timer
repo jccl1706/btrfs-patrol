@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily btrfs-patrol snapshot
+Documentation=https://github.com/OWNER/btrfs-patrol
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target

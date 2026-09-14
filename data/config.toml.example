@@ -1,0 +1,37 @@
+# btrfs-patrol configuration.
+#
+# Copy this file to /etc/btrfs-patrol/config.toml, adjust it, then run
+# 'sudo btrfs-patrol check'. The values below are the defaults, which match
+# Fedora's installer layout.
+
+[filesystem]
+# Block device holding the btrfs filesystem, or "auto" to use the device
+# mounted at /. Examples: "/dev/nvme0n1p3", "/dev/mapper/luks-<uuid>".
+device = "auto"
+
+# Subvolume mounted at /, as a path relative to the top-level subvolume.
+# Fedora's installer names it "root".
+root_subvolume = "root"
+
+# Top-level subvolume that holds the snapshots. It must NOT be inside the root
+# subvolume, or a rollback would move the snapshots away together with root.
+snapshots_subvolume = "snapshots"
+
+# Where snapshots_subvolume is mounted.
+snapshots_dir = "/.snapshots"
+
+[retention]
+# How many snapshots to keep before the oldest are pruned. Snapshots marked
+# with 'btrfs-patrol keep' don't count toward this limit.
+max_snapshots = 50
+
+[dnf]
+# Take a snapshot before each dnf5 transaction (needs libdnf5-plugin-actions).
+pre_snapshot = true
+# Also take one after each transaction.
+post_snapshot = false
+
+[output]
+# "auto" (color only on a terminal, and not when NO_COLOR is set), "always"
+# or "never".
+color = "auto"

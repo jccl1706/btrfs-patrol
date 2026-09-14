@@ -1,0 +1,23 @@
+btrfs-patrol
+Copyright (C) 2026 btrfs-patrol contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See LICENSE for the full text.
+
+Credits
+-------
+
+btrfs-patrol is inspired by timepatrol by Alan Barros de Oliveira
+(https://github.com/abdeoliveira/timepatrol), in particular its rollback
+approach (moving the current root subvolume into the snapshots subvolume and
+snapshotting the chosen snapshot in its place), snapshots protected from
+pruning, and snapshot selectors.
+
+btrfs-patrol is a new implementation in Python and contains no timepatrol code.
+The timepatrol repository has no license file; its AUR package (timepatrol-git)
+declares GPL-3.0-or-later.
+
+TODO(license): record the timepatrol author's license confirmation here once
+received.
