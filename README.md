@@ -2,9 +2,10 @@
 
 A btrfs snapshot manager and rollback tool for Fedora.
 
-> **Status: early development.** Snapshots, listing, pruning and `check` work
-> but have not been tested much on real systems. `rollback` and `setup` are
-> not implemented yet. Try it in a virtual machine first.
+> **Status: early development.** Snapshots, listing, pruning, `check` and
+> `rollback` work and have been tested on a Fedora 44 VM, but not yet on real
+> hardware. `setup` is not implemented yet. Try rollback in a virtual machine
+> first.
 
 btrfs-patrol is inspired by [timepatrol](https://github.com/abdeoliveira/timepatrol)
 and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
@@ -29,7 +30,7 @@ btrfs-patrol unkeep SELECTOR              let snapshots be pruned again
 btrfs-patrol delete SELECTOR [--yes]      delete snapshots
 btrfs-patrol prune                        delete snapshots beyond the limit
 btrfs-patrol check                        check configuration, mounts and snapshots
-btrfs-patrol rollback ID                  (not implemented yet)
+btrfs-patrol rollback ID [--dry-run]      roll / back to a snapshot, then reboot
 btrfs-patrol setup                        (not implemented yet)
 ```
 
@@ -39,6 +40,39 @@ Selectors pick snapshots by ID (`3`, `1,10,20-23`) or by field
 
 Snapshot IDs are never reused: deleting the newest snapshot doesn't free its
 number, so an ID you noted down always means the same snapshot.
+
+## Rolling back
+
+```sh
+sudo btrfs-patrol rollback 12 --dry-run   # run every check, change nothing
+sudo btrfs-patrol rollback 12             # roll back, after confirmation
+sudo reboot
+```
+
+A rollback replaces the root subvolume with a writable copy of the snapshot.
+The system you are leaving isn't lost: it is kept as a new snapshot of kind
+`rollback`, marked kept, so you can roll forward to it again or delete it once
+you're happy. The running system keeps working until you reboot; nothing
+reboots automatically.
+
+What is and isn't rolled back:
+
+- **Rolled back:** everything in the root subvolume, including `/etc`, `/usr`
+  and the RPM database.
+- **Not rolled back:** `/home` and any other separate subvolume, and `/boot`,
+  which on Fedora is a separate partition holding the kernels.
+- **Kept, not rolled back:** subvolumes nested inside the root subvolume, such
+  as `/var/lib/portables`. They are moved into the restored root.
+
+Because `/boot` isn't rolled back, rollback refuses a snapshot that has no
+kernel modules for the running kernel, or when the running kernel has no boot
+entry. It warns when other boot entries have kernels the snapshot lacks; pick
+the running kernel in the boot menu in that case.
+
+Rollback works whether the root is found at boot through the btrfs default
+subvolume (Fedora's installer) or by name with `subvol=`. It refuses setups
+that mount the root by subvolume ID (`subvolid=`), which can't follow a
+rollback. If any step fails, the steps already done are undone.
 
 ## Manual setup
 
@@ -89,11 +123,11 @@ src/btrfs_patrol/
   config.py                     configuration loading and validation
   snapshots.py                  snapshot metadata, store and pruning
   selectors.py                  "1,10,20-23", "kernel=6.17", ...
+  rollback.py                   rollback checks, plan and undoable steps
   btrfs.py                      wrapper around the btrfs command
-  system.py                     mount table parsing
+  system.py                     commands, mount table, top-level mount
   boot.py                       boot entries in /boot
   dnf.py                        dnf5 transaction hook
-  rollback.py                   rollback (planned steps, not implemented)
   output.py                     colors and the snapshot table
 data/
   config.toml.example           default configuration
@@ -105,11 +139,10 @@ tests/                          unittest suite
 
 ## Roadmap
 
-1. Test the core commands on a Fedora VM.
-2. Rollback, following the plan in `src/btrfs_patrol/rollback.py`.
-3. `setup` to create the snapshots subvolume, fstab entry and configuration.
-4. Package lists from dnf5 transactions in snapshot descriptions.
-5. COPR repository.
+1. Test on real hardware.
+2. `setup` to create the snapshots subvolume, fstab entry and configuration.
+3. Package lists from dnf5 transactions in snapshot descriptions.
+4. COPR repository.
 
 ## License
 

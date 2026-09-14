@@ -7,10 +7,10 @@ non-zero exit status always raises PatrolError with btrfs's own message.
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from btrfs_patrol import system
 from btrfs_patrol.errors import PatrolError
 
 BTRFS = "btrfs"
@@ -20,19 +20,12 @@ BTRFS = "btrfs"
 class Subvolume:
     id: int
     path: str
-    """Path relative to the top-level subvolume, e.g. "root" or "snapshots/3/snapshot"."""
+    """Path as btrfs lists it. Listed from the top-level subvolume, this is relative to
+    the top level, e.g. "root", "root/var/lib/portables" or "snapshots/3/snapshot"."""
 
 
 def run(*args: str | Path) -> str:
-    command = [BTRFS, *map(str, args)]
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-    except FileNotFoundError:
-        raise PatrolError(f"{BTRFS} not found; install btrfs-progs") from None
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
-        raise PatrolError(f"{' '.join(command)}: {detail}")
-    return result.stdout
+    return system.run(BTRFS, *args, missing=f"{BTRFS} not found; install btrfs-progs")
 
 
 def parse_subvolume_list(output: str) -> list[Subvolume]:
@@ -58,6 +51,14 @@ def create_snapshot(source: Path, destination: Path, readonly: bool = False) -> 
 
 def delete_subvolume(path: Path) -> None:
     run("subvolume", "delete", path)
+
+
+def subvolume_id(path: Path) -> int:
+    """ID of the subvolume that contains path."""
+    output = run("inspect-internal", "rootid", path).strip()
+    if not output.isdigit():
+        raise PatrolError(f"unexpected output from btrfs inspect-internal rootid: {output!r}")
+    return int(output)
 
 
 def get_default_subvolume_id(mount: Path) -> int:

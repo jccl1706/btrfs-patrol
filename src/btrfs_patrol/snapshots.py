@@ -157,10 +157,9 @@ class SnapshotStore:
         _write_atomic(counter, f"{snapshot_id + 1}\n")
         return snapshot_id
 
-    def create(
-        self, source: Path, kind: str, description: str = "", keep: bool = False
-    ) -> Snapshot:
-        """Take a read-only snapshot of source. Call this while holding lock()."""
+    def new_entry(self, kind: str, description: str = "", keep: bool = False) -> Snapshot:
+        """Reserve an ID and write the metadata for a snapshot whose subvolume the caller
+        then puts in place. Call this while holding lock()."""
         snapshot = Snapshot(
             id=self._reserve_id(),
             # Metadata stores whole seconds; match it so the returned snapshot equals the saved one.
@@ -170,27 +169,40 @@ class SnapshotStore:
             description=description,
             keep=keep,
         )
-        directory = self.path(snapshot.id)
-        directory.mkdir()
-        # Metadata first, so a snapshot subvolume never exists without it.
+        self.path(snapshot.id).mkdir()
         try:
             self.save(snapshot)
+        except Exception:
+            self.remove_entry(snapshot.id)
+            raise
+        return snapshot
+
+    def remove_entry(self, snapshot_id: int) -> None:
+        """Remove a snapshot's metadata and its directory, which must hold nothing else."""
+        directory = self.path(snapshot_id)
+        (directory / INFO_FILE).unlink(missing_ok=True)
+        (directory / (INFO_FILE + ".tmp")).unlink(missing_ok=True)
+        directory.rmdir()
+
+    def create(
+        self, source: Path, kind: str, description: str = "", keep: bool = False
+    ) -> Snapshot:
+        """Take a read-only snapshot of source. Call this while holding lock()."""
+        # Metadata first, so a snapshot subvolume never exists without it.
+        snapshot = self.new_entry(kind, description, keep)
+        try:
             btrfs.create_snapshot(source, self.subvolume(snapshot.id), readonly=True)
         except Exception:
-            (directory / INFO_FILE).unlink(missing_ok=True)
-            (directory / (INFO_FILE + ".tmp")).unlink(missing_ok=True)
-            directory.rmdir()
+            self.remove_entry(snapshot.id)
             raise
         return snapshot
 
     def delete(self, snapshot_id: int) -> None:
         """Delete a snapshot's subvolume, then its metadata. Call this while holding lock()."""
-        directory = self.path(snapshot_id)
         subvolume = self.subvolume(snapshot_id)
         if subvolume.exists():
             btrfs.delete_subvolume(subvolume)
-        (directory / INFO_FILE).unlink(missing_ok=True)
-        directory.rmdir()
+        self.remove_entry(snapshot_id)
 
     def prune(self, max_snapshots: int) -> list[Snapshot]:
         """Delete snapshots beyond max_snapshots and return them. Call this while holding lock()."""

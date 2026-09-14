@@ -131,8 +131,25 @@ def cmd_prune(app: App, args: argparse.Namespace) -> int:
 
 
 def cmd_rollback(app: App, args: argparse.Namespace) -> int:
-    [snapshot] = app.matching(str(args.id))
-    rollback.rollback(app.config, app.store, snapshot)
+    [target] = app.matching(str(args.id))
+    require_confirmation_possible(args.yes or args.dry_run)
+    with rollback.prepare(app.config, app.store, target) as plan:
+        app.print(app.table([target]))
+        for line in plan.describe():
+            app.print(line)
+        for warning in plan.warnings:
+            app.console.warn(warning)
+        if args.dry_run:
+            app.console.info("dry run: nothing changed")
+            return 0
+        if not confirm(app.console, f"Roll back to snapshot {target.id}?", args.yes):
+            app.console.info("nothing changed")
+            return 1
+        saved = plan.execute()
+    app.console.info(
+        f"rolled back to snapshot {target.id}; the previous state is kept as snapshot {saved.id}"
+    )
+    app.console.info("reboot to start the restored system")
     return 0
 
 
@@ -247,8 +264,11 @@ def build_parser() -> argparse.ArgumentParser:
     add("prune", cmd_prune, "delete the oldest snapshots beyond retention.max_snapshots", True)
 
     command = add("rollback", cmd_rollback,
-                  "roll the root subvolume back to a snapshot (not implemented yet)", True)
+                  "roll the root subvolume back to a snapshot, then reboot to use it", True)
     command.add_argument("id", type=int)
+    command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
+    command.add_argument("-n", "--dry-run", action="store_true",
+                         help="run every check and show the plan, without changing anything")
 
     add("check", cmd_check, "check the configuration, mounts and snapshots")
     add("setup", None, "create the snapshots subvolume and configuration (not implemented yet)",
