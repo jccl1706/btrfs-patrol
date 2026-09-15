@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from btrfs_patrol import btrfs, setup, system
+from btrfs_patrol import btrfs, selinux, setup, system
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.errors import PatrolError
 from btrfs_patrol.setup import SetupPlan, config_text, fstab_entry, snapshot_mount_options
@@ -172,6 +172,25 @@ class ExecuteTests(unittest.TestCase):
             self.run.call_args_list,
             [mock.call("mount", self.config.snapshots_dir),
              mock.call("systemctl", "enable", "--now", setup.TIMER)],
+        )
+
+    def test_selinux_steps_come_after_mounting_and_before_the_timer(self):
+        plan = self.plan(
+            new_config_text=None, create_subvolume=False, create_mount_point=False,
+            fstab_line=None, add_exclusion=True, label_store=True, enable_timer=True,
+        )
+        self.assertEqual(len(plan.actions()), 4)
+        calls = []
+        self.run.side_effect = lambda *args, **kwargs: calls.append(args[:2]) or ""
+        snapshots_dir = self.config.snapshots_dir
+        with mock.patch.object(selinux, "add_exclusion", side_effect=lambda d: calls.append(("exclude", d))), \
+             mock.patch.object(selinux, "store_paths", return_value=[snapshots_dir]), \
+             mock.patch.object(selinux, "label", side_effect=lambda p: calls.append(("label", tuple(p)))):
+            plan.execute()
+        self.assertEqual(
+            calls,
+            [("mount", snapshots_dir), ("exclude", snapshots_dir),
+             ("label", (snapshots_dir,)), ("systemctl", "enable")],
         )
 
     def test_nothing_to_do(self):

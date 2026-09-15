@@ -5,7 +5,8 @@ A btrfs snapshot manager and rollback tool for Fedora.
 > **Status: 0.1.0, first release.** Every command has been tested on a Fedora
 > 44 VM and on a ThinkPad T480 (LUKS, LVM and btrfs), from source and from the
 > RPM: setup, snapshots from dnf and the timer, rollback to an older state and
-> forward again, and hibernating with a rollback waiting for its reboot. It is
+> forward again, and hibernating with a rollback waiting for its reboot - and
+> again, from the RPM, on a VM with SELinux enforcing, with no denials. It is
 > young software on the part of your system you most need to work, so keep
 > backups.
 
@@ -64,6 +65,12 @@ sudo btrfs-patrol setup             # do it, after confirmation
 4. **Timer:** enables and starts the daily snapshot timer. The RPM installs it
    switched off, as Fedora installs every package's services, so this is what
    turns scheduled snapshots on. A masked timer is left alone.
+5. **SELinux:** adds `/.snapshots` to `/etc/selinux/fixfiles_exclude_dirs`
+   whenever a policy is installed, and gives the snapshots directory and its
+   entries their labels when SELinux is on. A full relabel would otherwise
+   change the labels inside writable `rollback` snapshots, and rolling back to
+   one would boot a mislabeled system. For the same reason, a manual
+   `restorecon -R /` needs `-e /.snapshots`.
 
 It then runs `check`. It refuses rather than guesses when something is in the
 way: a root that isn't btrfs or is the top-level subvolume, a configuration
@@ -144,6 +151,7 @@ src/btrfs_patrol/
   system.py                     commands, atomic writes, mount table, top-level mount
   boot.py                       boot entries in /boot
   dnf.py                        dnf5 transaction hook
+  selinux.py                    relabel exclusion and labels for the snapshot store
   output.py                     colors and the snapshot table
 data/
   dnf5/btrfs-patrol.actions     libdnf5-plugin-actions hook
@@ -155,8 +163,7 @@ tests/                          unittest suite
 ## Roadmap
 
 1. COPR repository.
-2. Test with SELinux enforcing: both test machines had it disabled.
-3. Unified kernel images (Boot Loader Specification Type #2 entries) in the
+2. Unified kernel images (Boot Loader Specification Type #2 entries) in the
    rollback's boot checks.
 
 ## License

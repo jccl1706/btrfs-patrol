@@ -15,6 +15,9 @@ only the steps that are missing:
    disabled. The RPM installs it off, as Fedora's presets leave every
    package's units, so without this step nothing would take scheduled
    snapshots.
+5. SELinux, before the timer (see selinux.py): exclude the snapshots
+   directory from full relabels whenever a policy is installed, and give the
+   store's own files their labels when SELinux is enabled.
 
 A step that is already done is skipped, so running setup again is safe, also
 after a step failed.
@@ -31,7 +34,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from btrfs_patrol import btrfs, system
+from btrfs_patrol import btrfs, selinux, system
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.config import Config
 from btrfs_patrol.errors import PatrolError
@@ -141,6 +144,12 @@ def prepare(config_path: Path) -> Iterator[SetupPlan]:
         fstab_line = f"UUID={uuid}  {snapshots_dir}  btrfs  {options}  0 0"
 
     enable_timer = timer_needs_enabling(system.unit_file_state(TIMER))
+    add_exclusion = selinux.exclusion_missing(snapshots_dir)
+    # A store that isn't mounted yet gets labeled once it is; a mounted one only when
+    # restorecon says its labels differ from the policy's.
+    label_store = selinux.enabled() and (
+        snapshots_mount is None or bool(selinux.mislabeled(selinux.store_paths(snapshots_dir)))
+    )
 
     device = config.device or root.source
     with system.mounted_top_level(device) as top:
@@ -161,6 +170,8 @@ def prepare(config_path: Path) -> Iterator[SetupPlan]:
             fstab_line=fstab_line,
             mount=snapshots_mount is None,
             enable_timer=enable_timer,
+            add_exclusion=add_exclusion,
+            label_store=label_store,
         )
 
 
@@ -178,6 +189,10 @@ class SetupPlan:
     """The line to add to /etc/fstab, or None when it already has one."""
     mount: bool
     enable_timer: bool = False
+    add_exclusion: bool = False
+    """Add the snapshots directory to SELinux's fixfiles_exclude_dirs."""
+    label_store: bool = False
+    """Give the store's own files their SELinux labels."""
 
     def actions(self) -> list[str]:
         config = self.config
@@ -197,6 +212,15 @@ class SetupPlan:
             )
         if self.mount:
             actions.append(f"mount {config.snapshots_dir}")
+        if self.add_exclusion:
+            actions.append(
+                f"exclude {config.snapshots_dir} from full SELinux relabels ({selinux.EXCLUDE_FILE})"
+            )
+        if self.label_store:
+            actions.append(
+                f"set the SELinux labels of {config.snapshots_dir} and its snapshot entries "
+                "(not of what is inside the snapshots)"
+            )
         if self.enable_timer:
             actions.append(f"enable and start the daily snapshot timer ({TIMER})")
         return actions
@@ -225,6 +249,10 @@ class SetupPlan:
             system.run("systemctl", "daemon-reload")
         if self.mount:
             system.run("mount", config.snapshots_dir)
+        if self.add_exclusion:
+            selinux.add_exclusion(config.snapshots_dir)
+        if self.label_store:
+            selinux.label(selinux.store_paths(config.snapshots_dir))
         # Last, so the first scheduled run finds the snapshots directory mounted.
         if self.enable_timer:
             system.run("systemctl", "enable", "--now", TIMER)

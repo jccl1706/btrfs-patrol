@@ -10,7 +10,7 @@ from unittest import mock
 from support import make_snapshot
 
 from btrfs_patrol import config as config_mod
-from btrfs_patrol import system
+from btrfs_patrol import selinux, system
 from btrfs_patrol.cli import App, build_parser, cmd_delete, cmd_snapshot, main
 from btrfs_patrol.errors import PatrolError
 from btrfs_patrol.output import Console
@@ -28,6 +28,12 @@ class CliTests(unittest.TestCase):
         self.config = base / "config.toml"
         self.config.write_text(f'[filesystem]\nsnapshots_dir = "{self.snapshots_dir}"\n')
         self.store = SnapshotStore(self.snapshots_dir)
+        # Independent of the test machine's own SELinux state.
+        self.selinux = {}
+        for name in ("enabled", "exclusion_missing"):
+            patcher = mock.patch.object(selinux, name, return_value=False)
+            self.selinux[name] = patcher.start()
+            self.addCleanup(patcher.stop)
         for snapshot in (
             make_snapshot(1, description="fresh install", keep=True),
             make_snapshot(2, kind="timer"),
@@ -108,6 +114,19 @@ class CliTests(unittest.TestCase):
         self.assertIn("waiting for a reboot", err)
         self.assertIn("snapshot 8", err)
         self.assertIn("look good", out)
+
+    def test_check_warns_about_a_missing_relabel_exclusion(self):
+        self.selinux["exclusion_missing"].return_value = True
+        mounts = [
+            Mount("/root", "/", "btrfs", "/dev/vda2"),
+            Mount("/snapshots", str(self.snapshots_dir), "btrfs", "/dev/vda2"),
+        ]
+        for snapshot_id in self.store.ids():
+            self.store.subvolume(snapshot_id).mkdir()
+        with mock.patch.object(system, "read_mounts", return_value=mounts):
+            code, out, err = self.run_cli("check")
+        self.assertEqual(code, 0, err)
+        self.assertIn("isn't excluded from full SELinux relabels", err)
 
     def app(self, out):
         return App(config_mod.load(self.config), self.store, Console("never", out=out))

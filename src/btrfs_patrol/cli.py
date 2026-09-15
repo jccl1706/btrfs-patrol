@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from btrfs_patrol import __version__, dnf, rollback, setup, system
+from btrfs_patrol import __version__, dnf, rollback, selinux, setup, system
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.config import Config
 from btrfs_patrol.errors import PatrolError
@@ -221,6 +221,22 @@ def cmd_check(app: App, args: argparse.Namespace) -> int:
                 continue
             if not app.store.subvolume(snapshot_id).is_dir():
                 problems.append(f"snapshot {snapshot_id} has metadata but no subvolume")
+        if selinux.enabled():
+            try:
+                if selinux.mislabeled(selinux.store_paths(config.snapshots_dir)):
+                    app.console.warn(
+                        f"{config.snapshots_dir} or its snapshot entries don't have their "
+                        "SELinux labels; run 'btrfs-patrol setup'"
+                    )
+            except PatrolError as e:
+                app.console.warn(f"could not check SELinux labels: {e}")
+
+    if selinux.exclusion_missing(config.snapshots_dir):
+        app.console.warn(
+            f"{config.snapshots_dir} isn't excluded from full SELinux relabels: one would change "
+            "the labels inside writable rollback snapshots, and rolling back to such a snapshot "
+            "would boot a mislabeled system; run 'btrfs-patrol setup'"
+        )
 
     for problem in problems:
         app.console.error(problem)
