@@ -2,9 +2,12 @@
 
 A btrfs snapshot manager and rollback tool for Fedora.
 
-> **Status: early development.** Every command has been tested on a Fedora 44
-> VM, including rollback in both directions, but not yet on real hardware.
-> Try it in a virtual machine first.
+> **Status: 0.1.0, first release.** Every command has been tested on a Fedora
+> 44 VM and on a ThinkPad T480 (LUKS, LVM and btrfs), from source and from the
+> RPM: setup, snapshots from dnf and the timer, rollback to an older state and
+> forward again, and hibernating with a rollback waiting for its reboot. It is
+> young software on the part of your system you most need to work, so keep
+> backups.
 
 btrfs-patrol is inspired by [timepatrol](https://github.com/abdeoliveira/timepatrol)
 and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
@@ -151,9 +154,10 @@ tests/                          unittest suite
 
 ## Roadmap
 
-1. Test on real hardware.
-2. Package lists from dnf5 transactions in snapshot descriptions.
-3. COPR repository.
+1. COPR repository.
+2. Test with SELinux enforcing: both test machines had it disabled.
+3. Unified kernel images (Boot Loader Specification Type #2 entries) in the
+   rollback's boot checks.
 
 ## License
 

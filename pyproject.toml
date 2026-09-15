@@ -12,7 +12,7 @@ license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 dependencies = []
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: System Administrators",
     "Operating System :: POSIX :: Linux",
