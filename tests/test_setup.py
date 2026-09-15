@@ -46,6 +46,25 @@ class FstabTests(unittest.TestCase):
         self.assertEqual(snapshot_mount_options(None, "@snapshots"), "subvol=@snapshots,noatime")
 
 
+class TimerTests(unittest.TestCase):
+    def test_only_a_disabled_timer_is_enabled(self):
+        self.assertTrue(setup.timer_needs_enabling("disabled"))
+        for state in (None, "enabled", "masked", "static", "enabled-runtime"):
+            with self.subTest(state=state):
+                self.assertFalse(setup.timer_needs_enabling(state))
+
+    def test_unit_file_state(self):
+        def fake_run(stdout):
+            return mock.Mock(stdout=stdout, returncode=0)
+
+        with mock.patch("subprocess.run", return_value=fake_run("disabled\n")):
+            self.assertEqual(system.unit_file_state(setup.TIMER), "disabled")
+        with mock.patch("subprocess.run", return_value=fake_run("not-found\n")):
+            self.assertIsNone(system.unit_file_state(setup.TIMER))
+        with mock.patch("subprocess.run", side_effect=FileNotFoundError):
+            self.assertIsNone(system.unit_file_state(setup.TIMER))
+
+
 class ConfigTextTests(unittest.TestCase):
     def test_example_matches_the_defaults(self):
         example = config_mod.parse(tomllib.loads(config_mod.example_text()))
@@ -136,6 +155,23 @@ class ExecuteTests(unittest.TestCase):
         self.assertEqual(
             self.run.call_args_list,
             [mock.call("systemctl", "daemon-reload"), mock.call("mount", self.config.snapshots_dir)],
+        )
+
+    def test_enables_the_timer_after_mounting(self):
+        plan = self.plan(
+            new_config_text=None, create_subvolume=False, create_mount_point=False,
+            fstab_line=None, enable_timer=True,
+        )
+        self.assertEqual(
+            plan.actions(),
+            [f"mount {self.config.snapshots_dir}",
+             f"enable and start the daily snapshot timer ({setup.TIMER})"],
+        )
+        plan.execute()
+        self.assertEqual(
+            self.run.call_args_list,
+            [mock.call("mount", self.config.snapshots_dir),
+             mock.call("systemctl", "enable", "--now", setup.TIMER)],
         )
 
     def test_nothing_to_do(self):

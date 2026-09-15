@@ -11,6 +11,10 @@ only the steps that are missing:
    root: old snapshots can contain setuid programs with known security holes.
 3. Create the mount point, add it to /etc/fstab (after saving a backup), and
    mount it.
+4. Enable and start the daily snapshot timer, when its unit is installed and
+   disabled. The RPM installs it off, as Fedora's presets leave every
+   package's units, so without this step nothing would take scheduled
+   snapshots.
 
 A step that is already done is skipped, so running setup again is safe, also
 after a step failed.
@@ -37,6 +41,17 @@ FSTAB = Path("/etc/fstab")
 FSTAB_BACKUP_SUFFIX = ".btrfs-patrol-backup"
 # The top directory of every btrfs subvolume has this inode number.
 SUBVOLUME_ROOT_INODE = 256
+TIMER = "btrfs-patrol-snapshot.timer"
+
+
+def timer_needs_enabling(state: str | None) -> bool:
+    """Whether setup should enable the timer, given its 'systemctl is-enabled' state.
+
+    Only "disabled", the state a fresh package install leaves it in. Not
+    installed (None, as from a source checkout), already enabled, masked or
+    static timers are left alone: a masked timer is a choice someone made.
+    """
+    return state == "disabled"
 
 
 def fstab_entry(fstab: str, mount_point: Path) -> list[str] | None:
@@ -125,6 +140,8 @@ def prepare(config_path: Path) -> Iterator[SetupPlan]:
         options = snapshot_mount_options(fstab_entry(fstab, ROOT_MOUNT), config.snapshots_subvolume)
         fstab_line = f"UUID={uuid}  {snapshots_dir}  btrfs  {options}  0 0"
 
+    enable_timer = timer_needs_enabling(system.unit_file_state(TIMER))
+
     device = config.device or root.source
     with system.mounted_top_level(device) as top:
         subvolume = top / config.snapshots_subvolume
@@ -143,6 +160,7 @@ def prepare(config_path: Path) -> Iterator[SetupPlan]:
             create_mount_point=snapshots_mount is None and not snapshots_dir.exists(),
             fstab_line=fstab_line,
             mount=snapshots_mount is None,
+            enable_timer=enable_timer,
         )
 
 
@@ -159,6 +177,7 @@ class SetupPlan:
     fstab_line: str | None
     """The line to add to /etc/fstab, or None when it already has one."""
     mount: bool
+    enable_timer: bool = False
 
     def actions(self) -> list[str]:
         config = self.config
@@ -178,6 +197,8 @@ class SetupPlan:
             )
         if self.mount:
             actions.append(f"mount {config.snapshots_dir}")
+        if self.enable_timer:
+            actions.append(f"enable and start the daily snapshot timer ({TIMER})")
         return actions
 
     def execute(self) -> None:
@@ -204,3 +225,6 @@ class SetupPlan:
             system.run("systemctl", "daemon-reload")
         if self.mount:
             system.run("mount", config.snapshots_dir)
+        # Last, so the first scheduled run finds the snapshots directory mounted.
+        if self.enable_timer:
+            system.run("systemctl", "enable", "--now", TIMER)

@@ -36,6 +36,21 @@ def run(*command: str | Path, missing: str | None = None) -> str:
     return result.stdout
 
 
+def unit_file_state(unit: str) -> str | None:
+    """The unit's 'systemctl is-enabled' state, such as "enabled" or "disabled".
+
+    None when systemd doesn't know the unit, or isn't there at all.
+    """
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-enabled", unit], capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError:
+        return None
+    state = result.stdout.strip()
+    return None if state in ("", "not-found") else state
+
+
 def write_atomic(path: Path, text: str, mode: int | None = None) -> None:
     """Replace path with text, so a crash never leaves a half-written file."""
     tmp = path.with_name(path.name + ".tmp")

@@ -58,6 +58,9 @@ sudo btrfs-patrol setup             # do it, after confirmation
 3. **Mount:** creates `/.snapshots`, adds it to `/etc/fstab` with the root's
    mount options (saving the old file as `/etc/fstab.btrfs-patrol-backup`),
    and mounts it.
+4. **Timer:** enables and starts the daily snapshot timer. The RPM installs it
+   switched off, as Fedora installs every package's services, so this is what
+   turns scheduled snapshots on. A masked timer is left alone.
 
 It then runs `check`. It refuses rather than guesses when something is in the
 way: a root that isn't btrfs or is the top-level subvolume, a configuration
