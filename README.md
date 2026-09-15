@@ -19,7 +19,8 @@ and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
   and checks every step.
 - **Handles dnf5**: snapshots before (and optionally after) each transaction.
 - **Knows about `/boot`**: Fedora keeps kernels outside the root subvolume, so
-  rollback refuses snapshots whose kernel can't be booted.
+  rollback refuses snapshots whose kernel can't be booted. Both kinds of boot
+  entry count: `/boot/loader/entries` files and unified kernel images.
 - **No dependencies** beyond Python 3.11+, `btrfs-progs` and `util-linux`.
 
 ## Commands
@@ -114,7 +115,9 @@ Until you reboot, `/` is still the previous system. `check` says so,
 
 Because `/boot` isn't rolled back, rollback refuses a snapshot that has no
 kernel modules for the running kernel, or when the running kernel has no boot
-entry. It warns when other boot entries have kernels the snapshot lacks; pick
+entry - neither a file in `/boot/loader/entries` nor a unified kernel image in
+`EFI/Linux` on the EFI system partition, whose version is read from the image
+itself. It warns when other boot entries have kernels the snapshot lacks; pick
 the running kernel in the boot menu in that case.
 
 Rollback works whether the root is found at boot through the btrfs default
@@ -149,7 +152,7 @@ src/btrfs_patrol/
   rollback.py                   rollback checks, plan and undoable steps
   btrfs.py                      wrapper around the btrfs command
   system.py                     commands, atomic writes, mount table, top-level mount
-  boot.py                       boot entries in /boot
+  boot.py                       boot entries and unified kernel images
   dnf.py                        dnf5 transaction hook
   selinux.py                    relabel exclusion and labels for the snapshot store
   output.py                     colors and the snapshot table
@@ -163,9 +166,7 @@ tests/                          unittest suite
 ## Roadmap
 
 1. COPR repository.
-2. Unified kernel images (Boot Loader Specification Type #2 entries) in the
-   rollback's boot checks.
-3. Boot menu entries for snapshots, for systemd-boot and GRUB, so a system
+2. Boot menu entries for snapshots, for systemd-boot and GRUB, so a system
    too broken to log in to (after `rm -rf /etc`, say) can boot a snapshot and
    be rolled back from there, without a live USB. The entries would boot a
    snapshot read-only, with a kernel it has modules for, and be kept in step

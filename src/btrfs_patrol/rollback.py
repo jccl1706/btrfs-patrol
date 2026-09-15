@@ -145,7 +145,7 @@ def prepare(config: Config, store: SnapshotStore, target: Snapshot) -> Iterator[
         )
     kernels = boot.installed_kernel_versions()
     if kernel not in kernels:
-        raise PatrolError(f"the running kernel {kernel} has no boot entry in {boot.BOOT_ENTRIES}")
+        raise PatrolError(f"the running kernel {kernel} has no boot entry in {boot.LOCATIONS}")
     warnings = []
     lacking = sorted(k for k in kernels if not (modules / k).is_dir())
     if lacking:
