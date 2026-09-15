@@ -234,6 +234,11 @@ tests/                          unittest suite (test_man.py keeps the manual in 
    be rolled back from there, without a live USB. The entries would boot a
    snapshot read-only, with a kernel it has modules for, and be kept in step
    as snapshots are taken, pruned and deleted.
+3. A terminal user interface (TUI): browse snapshots of every subvolume, see
+   what changed between two of them, take, keep, describe and delete
+   snapshots, and step through a rollback with its checks and plan on screen
+   before confirming. Built on Python's own curses module, so btrfs-patrol
+   still needs nothing beyond Python, `btrfs-progs` and `util-linux`.
 
 ## License
 
