@@ -16,7 +16,9 @@ Both kinds of Boot Loader Specification entries are read:
   kernel-install gives them, <entry-token>-<version>[+tries].efi.
 
 A version is only accepted if it looks like what 'uname -r' prints, so a file
-that can't be read can't vouch for a kernel by accident.
+that can't be read can't vouch for a kernel by accident. That also leaves out
+GRUB's rescue entry, which Fedora's installer creates with the version
+"0-rescue-<machine-id>": it names no kernel whose modules a snapshot could have.
 """
 
 from __future__ import annotations
@@ -133,7 +135,7 @@ def installed_kernel_versions(
     """Kernel versions (as in 'uname -r') that have a boot entry of either type."""
     versions = set()
     for path in sorted(entries_dir.glob("*.conf")):
-        version = parse_bls_entry(path.read_text()).get("version")
+        version = _valid(parse_bls_entry(path.read_text()).get("version", ""))
         if version:
             versions.add(version)
     seen = set()

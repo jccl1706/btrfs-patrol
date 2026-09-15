@@ -59,6 +59,12 @@ class BlsEntryTests(unittest.TestCase):
             (entries / "a-6.17.1.conf").write_text(ENTRY)
             (entries / "b-6.16.9.conf").write_text(ENTRY.replace("6.17.1-300", "6.16.9-200"))
             (entries / "rescue.conf").write_text("title Rescue\n")
+            # The rescue entry Fedora's installer writes for GRUB names no kernel version.
+            (entries / f"{MACHINE_ID}-0-rescue.conf").write_text(
+                f"title Fedora Linux (0-rescue-{MACHINE_ID}) 44 (Workstation Edition)\n"
+                f"version 0-rescue-{MACHINE_ID}\n"
+                f"linux /vmlinuz-0-rescue-{MACHINE_ID}\n"
+            )
             (entries / "notes.txt").write_text("version 1.0\n")
             self.assertEqual(
                 installed_kernel_versions(entries, esp_mounts=()),
