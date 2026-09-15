@@ -165,6 +165,11 @@ tests/                          unittest suite
 1. COPR repository.
 2. Unified kernel images (Boot Loader Specification Type #2 entries) in the
    rollback's boot checks.
+3. Boot menu entries for snapshots, for systemd-boot and GRUB, so a system
+   too broken to log in to (after `rm -rf /etc`, say) can boot a snapshot and
+   be rolled back from there, without a live USB. The entries would boot a
+   snapshot read-only, with a kernel it has modules for, and be kept in step
+   as snapshots are taken, pruned and deleted.
 
 ## License
 
