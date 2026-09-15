@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path, PurePosixPath
 
 from btrfs_patrol.errors import PatrolError
@@ -54,6 +55,11 @@ def resolve_path(path: Path | None = None) -> Path:
     if path is not None:
         return path
     return Path(os.environ.get(ENV_VAR) or DEFAULT_PATH)
+
+
+def example_text() -> str:
+    """The commented example configuration shipped inside the package."""
+    return resources.files("btrfs_patrol").joinpath("config.toml.example").read_text()
 
 
 def load(path: Path | None = None) -> Config:

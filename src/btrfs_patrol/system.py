@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Running commands, reading the mount table and mounting the top-level subvolume."""
+"""Running commands, writing files safely, reading the mount table and mounting the
+top-level subvolume."""
 
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 import subprocess
 import tempfile
@@ -32,6 +34,18 @@ def run(*command: str | Path, missing: str | None = None) -> str:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
         raise PatrolError(f"{' '.join(args)}: {detail}")
     return result.stdout
+
+
+def write_atomic(path: Path, text: str, mode: int | None = None) -> None:
+    """Replace path with text, so a crash never leaves a half-written file."""
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    if mode is not None:
+        tmp.chmod(mode)
+    os.replace(tmp, path)
 
 
 @dataclass(frozen=True)

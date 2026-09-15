@@ -17,7 +17,6 @@ pruning, and snapshot selectors.
 
 btrfs-patrol is a new implementation in Python and contains no timepatrol code.
 The timepatrol repository has no license file; its AUR package (timepatrol-git)
-declares GPL-3.0-or-later.
-
-TODO(license): record the timepatrol author's license confirmation here once
-received.
+declares GPL-3.0-or-later. On 2026-09-15 the author confirmed by email that
+the code on GitHub is under the same license terms as the AUR package, and
+that forking it is fine.

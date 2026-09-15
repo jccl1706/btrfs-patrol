@@ -49,6 +49,10 @@ def create_snapshot(source: Path, destination: Path, readonly: bool = False) -> 
     run("subvolume", "snapshot", *(["-r"] if readonly else []), source, destination)
 
 
+def create_subvolume(path: Path) -> None:
+    run("subvolume", "create", path)
+
+
 def delete_subvolume(path: Path) -> None:
     run("subvolume", "delete", path)
 

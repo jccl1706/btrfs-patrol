@@ -2,10 +2,9 @@
 
 A btrfs snapshot manager and rollback tool for Fedora.
 
-> **Status: early development.** Snapshots, listing, pruning, `check` and
-> `rollback` work and have been tested on a Fedora 44 VM, but not yet on real
-> hardware. `setup` is not implemented yet. Try rollback in a virtual machine
-> first.
+> **Status: early development.** Every command has been tested on a Fedora 44
+> VM, including rollback in both directions, but not yet on real hardware.
+> Try it in a virtual machine first.
 
 btrfs-patrol is inspired by [timepatrol](https://github.com/abdeoliveira/timepatrol)
 and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
@@ -17,11 +16,12 @@ and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
 - **Handles dnf5**: snapshots before (and optionally after) each transaction.
 - **Knows about `/boot`**: Fedora keeps kernels outside the root subvolume, so
   rollback refuses snapshots whose kernel can't be booted.
-- **No dependencies** beyond Python 3.11+ and `btrfs-progs`.
+- **No dependencies** beyond Python 3.11+, `btrfs-progs` and `util-linux`.
 
 ## Commands
 
 ```
+btrfs-patrol setup [--dry-run]            set the system up (run once)
 btrfs-patrol list [SELECTOR] [-v]         list snapshots
 btrfs-patrol snapshot [-d TEXT] [--keep]  take a snapshot of /
 btrfs-patrol describe ID TEXT             change a snapshot's description
@@ -31,7 +31,6 @@ btrfs-patrol delete SELECTOR [--yes]      delete snapshots
 btrfs-patrol prune                        delete snapshots beyond the limit
 btrfs-patrol check                        check configuration, mounts and snapshots
 btrfs-patrol rollback ID [--dry-run]      roll / back to a snapshot, then reboot
-btrfs-patrol setup                        (not implemented yet)
 ```
 
 Selectors pick snapshots by ID (`3`, `1,10,20-23`) or by field
@@ -40,6 +39,34 @@ Selectors pick snapshots by ID (`3`, `1,10,20-23`) or by field
 
 Snapshot IDs are never reused: deleting the newest snapshot doesn't free its
 number, so an ID you noted down always means the same snapshot.
+
+## Setup
+
+```sh
+sudo btrfs-patrol setup --dry-run   # show what it would do
+sudo btrfs-patrol setup             # do it, after confirmation
+```
+
+`setup` does only what is missing, so it is safe to run again:
+
+1. **Configuration:** writes `/etc/btrfs-patrol/config.toml` from the
+   commented example, with the root subvolume detected from the mount at `/`.
+   An existing configuration is kept.
+2. **Snapshots subvolume:** creates a top-level subvolume named `snapshots`
+   next to the root subvolume, readable only by root, because old snapshots
+   can contain setuid programs with known security holes.
+3. **Mount:** creates `/.snapshots`, adds it to `/etc/fstab` with the root's
+   mount options (saving the old file as `/etc/fstab.btrfs-patrol-backup`),
+   and mounts it.
+
+It then runs `check`. It refuses rather than guesses when something is in the
+way: a root that isn't btrfs or is the top-level subvolume, a configuration
+for a different root subvolume, something else mounted at `/.snapshots`, a
+non-empty `/.snapshots` directory, or an fstab line that mounts it differently.
+
+For dnf5 snapshots, install `libdnf5-plugin-actions` and copy
+`data/dnf5/btrfs-patrol.actions` to `/etc/dnf/libdnf5-plugins/actions.d/`.
+The RPM package installs that file for you.
 
 ## Rolling back
 
@@ -74,33 +101,6 @@ subvolume (Fedora's installer) or by name with `subvol=`. It refuses setups
 that mount the root by subvolume ID (`subvolid=`), which can't follow a
 rollback. If any step fails, the steps already done are undone.
 
-## Manual setup
-
-`btrfs-patrol setup` will automate this. Until then, on a default Fedora
-install:
-
-```sh
-# 1. Create a top-level "snapshots" subvolume next to "root".
-UUID=$(findmnt -no UUID /)
-sudo mount -o subvolid=5 UUID=$UUID /mnt
-sudo btrfs subvolume create /mnt/snapshots
-sudo chmod 700 /mnt/snapshots   # old snapshots may contain vulnerable setuid binaries
-sudo umount /mnt
-
-# 2. Mount it at /.snapshots on every boot.
-sudo mkdir /.snapshots
-echo "UUID=$UUID  /.snapshots  btrfs  subvol=snapshots,noatime  0 0" | sudo tee -a /etc/fstab
-sudo systemctl daemon-reload
-sudo mount /.snapshots
-
-# 3. Install the configuration and check it.
-sudo install -Dm644 data/config.toml.example /etc/btrfs-patrol/config.toml
-sudo PYTHONPATH=src python3 -m btrfs_patrol check
-```
-
-For dnf5 snapshots, install `libdnf5-plugin-actions` and copy
-`data/dnf5/btrfs-patrol.actions` to `/etc/dnf/libdnf5-plugins/actions.d/`.
-
 ## Development
 
 No packages need to be installed; the tests use the standard library's
@@ -121,16 +121,17 @@ pyproject.toml                  package metadata
 src/btrfs_patrol/
   cli.py                        argument parsing and commands
   config.py                     configuration loading and validation
+  config.toml.example           the commented default configuration
+  setup.py                      setup's checks and steps
   snapshots.py                  snapshot metadata, store and pruning
   selectors.py                  "1,10,20-23", "kernel=6.17", ...
   rollback.py                   rollback checks, plan and undoable steps
   btrfs.py                      wrapper around the btrfs command
-  system.py                     commands, mount table, top-level mount
+  system.py                     commands, atomic writes, mount table, top-level mount
   boot.py                       boot entries in /boot
   dnf.py                        dnf5 transaction hook
   output.py                     colors and the snapshot table
 data/
-  config.toml.example           default configuration
   dnf5/btrfs-patrol.actions     libdnf5-plugin-actions hook
   systemd/                      daily snapshot service and timer
 packaging/btrfs-patrol.spec     RPM spec for Fedora / COPR
@@ -140,9 +141,8 @@ tests/                          unittest suite
 ## Roadmap
 
 1. Test on real hardware.
-2. `setup` to create the snapshots subvolume, fstab entry and configuration.
-3. Package lists from dnf5 transactions in snapshot descriptions.
-4. COPR repository.
+2. Package lists from dnf5 transactions in snapshot descriptions.
+3. COPR repository.
 
 ## License
 

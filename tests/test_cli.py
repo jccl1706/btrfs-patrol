@@ -83,7 +83,7 @@ class CliTests(unittest.TestCase):
 
     @unittest.skipIf(os.geteuid() == 0, "running as root")
     def test_modifying_commands_require_root(self):
-        for argv in (["snapshot"], ["delete", "1"], ["rollback", "1"], ["dnf-hook", "pre"]):
+        for argv in (["snapshot"], ["delete", "1"], ["rollback", "1"], ["setup"], ["dnf-hook", "pre"]):
             with self.subTest(argv=argv):
                 code, _, err = self.run_cli(*argv)
                 self.assertEqual(code, 1)

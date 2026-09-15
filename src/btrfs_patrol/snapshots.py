@@ -15,14 +15,13 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
-import os
 import platform
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from btrfs_patrol import btrfs
+from btrfs_patrol import btrfs, system
 from btrfs_patrol.errors import PatrolError
 
 ROOT_MOUNT = Path("/")
@@ -79,16 +78,6 @@ def select_for_pruning(snapshots: Sequence[Snapshot], max_snapshots: int) -> lis
     return candidates[: max(len(candidates) - max_snapshots, 0)]
 
 
-def _write_atomic(path: Path, text: str) -> None:
-    """Replace path with text, so a crash never leaves a half-written file."""
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
-
-
 class SnapshotStore:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
@@ -124,7 +113,7 @@ class SnapshotStore:
         return [self.load(snapshot_id) for snapshot_id in self.ids()]
 
     def save(self, snapshot: Snapshot) -> None:
-        _write_atomic(
+        system.write_atomic(
             self.path(snapshot.id) / INFO_FILE, json.dumps(snapshot.to_json(), indent=2) + "\n"
         )
 
@@ -154,7 +143,7 @@ class SnapshotStore:
             raise PatrolError(f"{counter}: expected a snapshot ID") from None
         snapshot_id = max(stored, max(self.ids(), default=0) + 1)
         # Advance before creating anything, so a failed create can't hand the ID out twice.
-        _write_atomic(counter, f"{snapshot_id + 1}\n")
+        system.write_atomic(counter, f"{snapshot_id + 1}\n")
         return snapshot_id
 
     def new_entry(self, kind: str, description: str = "", keep: bool = False) -> Snapshot:

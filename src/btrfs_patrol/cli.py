@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from btrfs_patrol import __version__, dnf, rollback, system
+from btrfs_patrol import __version__, dnf, rollback, setup, system
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.config import Config
 from btrfs_patrol.errors import PatrolError
@@ -154,10 +154,7 @@ def cmd_rollback(app: App, args: argparse.Namespace) -> int:
 
 
 def cmd_check(app: App, args: argparse.Namespace) -> int:
-    """Compare the configuration with what is mounted, and look for broken snapshots.
-
-    TODO: add a rollback dry run once rollback is implemented.
-    """
+    """Compare the configuration with what is mounted, and look for broken snapshots."""
     config = app.config
     problems = []
     mounts = system.read_mounts()
@@ -174,9 +171,8 @@ def cmd_check(app: App, args: argparse.Namespace) -> int:
     snapshots_mount = system.find_mount(config.snapshots_dir, mounts)
     if snapshots_mount is None:
         problems.append(
-            f"{config.snapshots_dir} is not a mount point; mount the top-level "
-            f"{config.snapshots_subvolume!r} subvolume there so snapshots stay outside "
-            "the root subvolume"
+            f"{config.snapshots_dir} is not a mount point; run 'btrfs-patrol setup' to create "
+            f"and mount the top-level {config.snapshots_subvolume!r} subvolume there"
         )
     elif snapshots_mount.root != f"/{config.snapshots_subvolume}":
         problems.append(
@@ -201,6 +197,30 @@ def cmd_check(app: App, args: argparse.Namespace) -> int:
         return 1
     app.console.info("configuration and snapshots look good")
     return 0
+
+
+def cmd_setup(args: argparse.Namespace, console: Console) -> int:
+    """Set the system up, then check it. Unlike the other commands, needs no configuration."""
+    require_confirmation_possible(args.yes or args.dry_run)
+    with setup.prepare(config_mod.resolve_path(args.config)) as plan:
+        actions = plan.actions()
+        if not actions:
+            console.info("already set up; nothing to do")
+        else:
+            print("setup will:", file=console.out)
+            for action in actions:
+                print(f"  - {action}", file=console.out)
+            if args.dry_run:
+                console.info("dry run: nothing changed")
+                return 0
+            if not confirm(console, "Continue?", args.yes):
+                console.info("nothing changed")
+                return 1
+            plan.execute()
+            console.info("setup done")
+    if args.color is None:
+        console = Console(plan.config.color)
+    return cmd_check(App(plan.config, SnapshotStore(plan.config.snapshots_dir), console), args)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -271,8 +291,12 @@ def build_parser() -> argparse.ArgumentParser:
                          help="run every check and show the plan, without changing anything")
 
     add("check", cmd_check, "check the configuration, mounts and snapshots")
-    add("setup", None, "create the snapshots subvolume and configuration (not implemented yet)",
-        True)
+
+    command = add("setup", None,
+                  "create the configuration and the snapshots subvolume, and mount it", True)
+    command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
+    command.add_argument("-n", "--dry-run", action="store_true",
+                         help="show what setup would do, without changing anything")
 
     command = add("dnf-hook", None, "take a snapshot for a dnf5 transaction (used by dnf)", True)
     command.add_argument("phase", choices=("pre", "post"))
@@ -289,7 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "dnf-hook":
             return dnf.run_hook(args.phase, args.config, console)
         if args.command == "setup":
-            raise PatrolError("setup is not implemented yet; see README.md for the manual steps")
+            return cmd_setup(args, console)
         config = config_mod.load(args.config)
         if args.color is None:
             console = Console(config.color)

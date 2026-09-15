@@ -12,12 +12,13 @@ BuildRequires:  python3-devel
 BuildRequires:  systemd-rpm-macros
 
 Requires:       btrfs-progs
+Requires:       util-linux
 Recommends:     libdnf5-plugin-actions
 
 %description
 btrfs-patrol takes, lists and prunes snapshots of a btrfs root subvolume,
 takes snapshots around dnf5 transactions, and rolls the system back to a
-previous snapshot.
+previous snapshot. Run "btrfs-patrol setup" after installing.
 
 %prep
 %autosetup -p1
@@ -32,8 +33,6 @@ previous snapshot.
 %pyproject_install
 %pyproject_save_files -l btrfs_patrol
 
-install -Dpm 0644 data/config.toml.example \
-    %{buildroot}%{_datadir}/%{name}/config.toml.example
 install -Dpm 0644 data/dnf5/btrfs-patrol.actions \
     %{buildroot}%{_sysconfdir}/dnf/libdnf5-plugins/actions.d/btrfs-patrol.actions
 install -Dpm 0644 -t %{buildroot}%{_unitdir} \
@@ -56,7 +55,6 @@ install -Dpm 0644 -t %{buildroot}%{_unitdir} \
 %files -f %{pyproject_files}
 %doc README.md
 %{_bindir}/btrfs-patrol
-%{_datadir}/%{name}/
 %config(noreplace) %{_sysconfdir}/dnf/libdnf5-plugins/actions.d/btrfs-patrol.actions
 %{_unitdir}/btrfs-patrol-snapshot.service
 %{_unitdir}/btrfs-patrol-snapshot.timer

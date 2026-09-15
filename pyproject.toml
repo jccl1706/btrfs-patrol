@@ -25,3 +25,7 @@ btrfs-patrol = "btrfs_patrol.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Read by config.example_text(); setup writes it as the starting configuration.
+btrfs_patrol = ["config.toml.example"]
