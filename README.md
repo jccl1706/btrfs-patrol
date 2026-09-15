@@ -26,6 +26,22 @@ and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
   entry count: `/boot/loader/entries` files and unified kernel images.
 - **No dependencies** beyond Python 3.11+, `btrfs-progs` and `util-linux`.
 
+## Install
+
+From the [COPR repository](https://copr.fedorainfracloud.org/coprs/jccl1706/btrfs-patrol/),
+for Fedora 43 and newer on x86_64 and aarch64:
+
+```sh
+sudo dnf copr enable jccl1706/btrfs-patrol
+sudo dnf install btrfs-patrol
+sudo btrfs-patrol setup --dry-run   # see what setup will do
+sudo btrfs-patrol setup
+```
+
+`dnf upgrade` then keeps it up to date. Each
+[release](https://github.com/jccl1706/btrfs-patrol/releases) also has the RPM
+and source RPM, with their SHA-256 sums, for installing without the repository.
+
 ## Commands
 
 ```
@@ -173,8 +189,7 @@ tests/                          unittest suite (test_man.py keeps the manual in 
 
 ## Roadmap
 
-1. COPR repository.
-2. Boot menu entries for snapshots, for systemd-boot and GRUB, so a system
+1. Boot menu entries for snapshots, for systemd-boot and GRUB, so a system
    too broken to log in to (after `rm -rf /etc`, say) can boot a snapshot and
    be rolled back from there, without a live USB. The entries would boot a
    snapshot read-only, with a kernel it has modules for, and be kept in step
