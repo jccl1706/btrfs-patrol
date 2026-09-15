@@ -42,6 +42,36 @@ class ExclusionTests(unittest.TestCase):
         self.assertFalse(selinux.excluded(Path("/.snapshots"), "/.snapshots-old\n/snapshots\n"))
 
 
+class EnabledTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        self.enforce = base / "enforce"
+        self.current = base / "current"
+        for patcher in (
+            mock.patch.object(selinux, "SELINUXFS_ENFORCE", self.enforce),
+            mock.patch.object(selinux, "PROC_ATTR_CURRENT", self.current),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_disabled_with_selinuxfs_mounted(self):
+        # Fedora with SELinux disabled: the enforce file exists, but no policy is loaded.
+        self.enforce.write_text("0")
+        self.current.write_text("kernel\0")
+        self.assertFalse(selinux.enabled())
+
+    def test_enabled_permissive_or_enforcing(self):
+        self.enforce.write_text("0")
+        self.current.write_text("unconfined_u:unconfined_r:unconfined_t:s0\0")
+        self.assertTrue(selinux.enabled())
+
+    def test_no_selinuxfs(self):
+        self.current.write_text("unconfined_u:unconfined_r:unconfined_t:s0\0")
+        self.assertFalse(selinux.enabled())
+
+
 class StoreTests(unittest.TestCase):
     def test_store_files_but_never_snapshot_contents(self):
         tmp = tempfile.TemporaryDirectory()

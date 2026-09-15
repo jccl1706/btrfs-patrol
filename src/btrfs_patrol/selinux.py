@@ -31,6 +31,7 @@ from btrfs_patrol.snapshots import COUNTER_FILE, INFO_FILE, LOCK_FILE
 SELINUX_DIR = Path("/etc/selinux")
 EXCLUDE_FILE = SELINUX_DIR / "fixfiles_exclude_dirs"
 SELINUXFS_ENFORCE = Path("/sys/fs/selinux/enforce")
+PROC_ATTR_CURRENT = Path("/proc/self/attr/current")
 
 
 def policy_installed() -> bool:
@@ -38,8 +39,21 @@ def policy_installed() -> bool:
 
 
 def enabled() -> bool:
-    """SELinux is on, enforcing or permissive."""
-    return SELINUXFS_ENFORCE.exists()
+    """SELinux is on with a policy loaded, enforcing or permissive.
+
+    Not merely "/sys/fs/selinux/enforce exists": Fedora mounts selinuxfs, enforce
+    file included, with SELinux disabled and no policy installed at all - seen on
+    two machines, where 0.1.0 then warned about labels it could not set. Like
+    libselinux's is_selinux_enabled(), go by whether processes have a context:
+    without a loaded policy, /proc/self/attr/current reads "kernel".
+    """
+    if not SELINUXFS_ENFORCE.exists():
+        return False
+    try:
+        context = PROC_ATTR_CURRENT.read_text()
+    except OSError:
+        return False
+    return context.strip("\0\n ") not in ("", "kernel")
 
 
 def excluded(snapshots_dir: Path, exclude_text: str) -> bool:
