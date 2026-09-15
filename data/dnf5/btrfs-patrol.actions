@@ -4,6 +4,7 @@
 #
 # The empty package filter runs the command once per transaction.
 # enabled=host-only skips transactions on an --installroot, which don't change
-# this system's root subvolume.
-pre_transaction:::enabled=host-only:/usr/bin/btrfs-patrol dnf-hook pre
-post_transaction:::enabled=host-only:/usr/bin/btrfs-patrol dnf-hook post
+# this system's root subvolume. mode=json lets the hook ask the plugin which
+# packages the transaction changes, for the snapshot's description.
+pre_transaction:::enabled=host-only mode=json:/usr/bin/btrfs-patrol dnf-hook pre
+post_transaction:::enabled=host-only mode=json:/usr/bin/btrfs-patrol dnf-hook post

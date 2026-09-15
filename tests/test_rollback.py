@@ -12,8 +12,15 @@ from btrfs_patrol import boot, btrfs, rollback
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.btrfs import Subvolume
 from btrfs_patrol.errors import PatrolError
-from btrfs_patrol.rollback import DEFAULT_SUBVOLUME, RollbackPlan, boot_method, nested_subvolumes
+from btrfs_patrol.rollback import (
+    DEFAULT_SUBVOLUME,
+    RollbackPlan,
+    boot_method,
+    nested_subvolumes,
+    pending_rollback,
+)
 from btrfs_patrol.snapshots import SnapshotStore
+from btrfs_patrol.system import Mount
 
 FEDORA_FSTAB = """\
 UUID=FFE9-D9AE  /boot  vfat   umask=0077                0 2
@@ -45,6 +52,24 @@ class BootMethodTests(unittest.TestCase):
         ):
             with self.subTest(fstab=fstab, cmdline=cmdline), self.assertRaises(PatrolError):
                 boot_method("root", fstab, cmdline)
+
+
+class PendingRollbackTests(unittest.TestCase):
+    def setUp(self):
+        self.config = config_mod.parse({})
+
+    def pending(self, root, fstype="btrfs"):
+        return pending_rollback(self.config, Mount(root, "/", fstype, "/dev/vda2"))
+
+    def test_root_moved_into_the_store(self):
+        self.assertEqual(self.pending("/snapshots/8/snapshot"), 8)
+
+    def test_not_pending(self):
+        self.assertIsNone(self.pending("/root"))
+        self.assertIsNone(self.pending("/snapshots/8/other"))
+        self.assertIsNone(self.pending("/snapshots/x/snapshot"))
+        self.assertIsNone(self.pending("/snapshots/8/snapshot", fstype="ext4"))
+        self.assertIsNone(pending_rollback(self.config, None))
 
 
 class NestedSubvolumeTests(unittest.TestCase):

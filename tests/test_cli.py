@@ -10,10 +10,12 @@ from unittest import mock
 from support import make_snapshot
 
 from btrfs_patrol import config as config_mod
-from btrfs_patrol.cli import App, build_parser, cmd_delete, main
+from btrfs_patrol import system
+from btrfs_patrol.cli import App, build_parser, cmd_delete, cmd_snapshot, main
 from btrfs_patrol.errors import PatrolError
 from btrfs_patrol.output import Console
 from btrfs_patrol.snapshots import SnapshotStore
+from btrfs_patrol.system import Mount
 
 
 class CliTests(unittest.TestCase):
@@ -80,6 +82,58 @@ class CliTests(unittest.TestCase):
                 cmd_delete(app, args)
         self.assertEqual(out.getvalue(), "")
         self.assertTrue(self.store.path(1).exists())
+
+    def test_list_off_a_terminal_prints_whole_descriptions(self):
+        description = "state before the big upgrade, " * 4
+        snapshot = make_snapshot(3, description=description.strip())
+        self.store.path(3).mkdir()
+        self.store.save(snapshot)
+        code, out, err = self.run_cli("list")
+        self.assertEqual(code, 0, err)
+        self.assertIn(description.strip(), out)
+        self.assertNotIn("…", out)
+
+    def pending_mounts(self):
+        return [
+            Mount("/snapshots/8/snapshot", "/", "btrfs", "/dev/vda2"),
+            Mount("/snapshots", str(self.snapshots_dir), "btrfs", "/dev/vda2"),
+        ]
+
+    def test_check_during_a_pending_rollback_warns_but_passes(self):
+        for snapshot_id in self.store.ids():
+            self.store.subvolume(snapshot_id).mkdir()
+        with mock.patch.object(system, "read_mounts", return_value=self.pending_mounts()):
+            code, out, err = self.run_cli("check")
+        self.assertEqual(code, 0, err)
+        self.assertIn("waiting for a reboot", err)
+        self.assertIn("snapshot 8", err)
+        self.assertIn("look good", out)
+
+    def app(self, out):
+        return App(config_mod.load(self.config), self.store, Console("never", out=out))
+
+    def test_snapshot_during_a_pending_rollback_is_refused(self):
+        args = build_parser().parse_args(["snapshot"])
+        with mock.patch.object(system, "read_mounts", return_value=self.pending_mounts()):
+            with self.assertRaisesRegex(PatrolError, "reboot first"):
+                cmd_snapshot(self.app(io.StringIO()), args)
+        self.assertEqual(self.store.ids(), [1, 2])
+
+    def test_timer_snapshot_during_a_pending_rollback_is_skipped(self):
+        out = io.StringIO()
+        args = build_parser().parse_args(["snapshot", "--kind", "timer"])
+        with mock.patch.object(system, "read_mounts", return_value=self.pending_mounts()):
+            self.assertEqual(cmd_snapshot(self.app(out), args), 0)
+        self.assertIn("skipping the scheduled snapshot", out.getvalue())
+        self.assertEqual(self.store.ids(), [1, 2])
+
+    def test_dnf_hook_refuses_a_terminal(self):
+        terminal = io.StringIO()
+        terminal.isatty = lambda: True
+        with mock.patch("sys.stdin", terminal), mock.patch("os.geteuid", return_value=0):
+            code, _, err = self.run_cli("dnf-hook", "pre")
+        self.assertEqual(code, 1)
+        self.assertIn("run by dnf's actions plugin", err)
 
     @unittest.skipIf(os.geteuid() == 0, "running as root")
     def test_modifying_commands_require_root(self):

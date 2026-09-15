@@ -66,7 +66,9 @@ non-empty `/.snapshots` directory, or an fstab line that mounts it differently.
 
 For dnf5 snapshots, install `libdnf5-plugin-actions` and copy
 `data/dnf5/btrfs-patrol.actions` to `/etc/dnf/libdnf5-plugins/actions.d/`.
-The RPM package installs that file for you.
+The RPM package installs that file for you. Each snapshot's description says
+what the transaction changes, such as
+`upgrade kernel-core, mesa-dri-drivers +12 more; install tree`.
 
 ## Rolling back
 
@@ -90,6 +92,12 @@ What is and isn't rolled back:
   which on Fedora is a separate partition holding the kernels.
 - **Kept, not rolled back:** subvolumes nested inside the root subvolume, such
   as `/var/lib/portables`. They are moved into the restored root.
+- **Logs leave with the previous state:** `/var/log` is part of the root
+  subvolume, so the journal written since the snapshot stays in the `rollback`
+  snapshot. `rollback` prints the `journalctl -D` command that reads it.
+
+Until you reboot, `/` is still the previous system. `check` says so,
+`snapshot` refuses to run, and the timer and the dnf hook skip their snapshots.
 
 Because `/boot` isn't rolled back, rollback refuses a snapshot that has no
 kernel modules for the running kernel, or when the running kernel has no boot

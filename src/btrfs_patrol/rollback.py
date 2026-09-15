@@ -71,6 +71,30 @@ def boot_method(root_subvolume: str, fstab: str, cmdline: str) -> str:
     return f"subvol={root_subvolume}" if by_name else DEFAULT_SUBVOLUME
 
 
+def pending_rollback(config: Config, root: system.Mount | None) -> int | None:
+    """The ID of the snapshot that / still is while a rollback waits for a reboot, else None.
+
+    A rollback moves the running root subvolume into the snapshot store, and the
+    mount table follows it: until the reboot, / is mounted from
+    "/<snapshots_subvolume>/<id>/snapshot" instead of "/<root_subvolume>".
+    """
+    if root is None or root.fstype != "btrfs":
+        return None
+    prefix = f"/{config.snapshots_subvolume.strip('/')}/"
+    suffix = f"/{SUBVOLUME_NAME}"
+    if not (root.root.startswith(prefix) and root.root.endswith(suffix)):
+        return None
+    middle = root.root[len(prefix) : -len(suffix)]
+    return int(middle) if middle.isascii() and middle.isdigit() else None
+
+
+def pending_rollback_message(snapshot_id: int) -> str:
+    return (
+        "a rollback is waiting for a reboot: / is still the previous system, "
+        f"kept as snapshot {snapshot_id}"
+    )
+
+
 def _fstab_root_options(fstab: str) -> list[str]:
     for line in fstab.splitlines():
         fields = line.split()
@@ -189,6 +213,8 @@ class RollbackPlan:
             f"running kernel:     {self.kernel} (modules in the snapshot, boot entry present)",
             f"nested subvolumes:  {', '.join(self.nested) or 'none'} (kept, moved into the restored root)",
             "current state:      kept as a new snapshot of kind 'rollback'",
+            "logs:               /var/log is part of the root subvolume, so logs written "
+            f"since snapshot {self.target.id} stay with the current state",
         ]
 
     def execute(self) -> Snapshot:

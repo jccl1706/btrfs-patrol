@@ -17,7 +17,9 @@ from btrfs_patrol.config import Config
 from btrfs_patrol.errors import PatrolError
 from btrfs_patrol.output import Console, format_table
 from btrfs_patrol.selectors import select
-from btrfs_patrol.snapshots import ROOT_MOUNT, Snapshot, SnapshotStore
+from btrfs_patrol.snapshots import ROOT_MOUNT, SUBVOLUME_NAME, Snapshot, SnapshotStore
+
+MACHINE_ID = Path("/etc/machine-id")
 
 SELECTOR_HELP = """\
 selectors:
@@ -44,8 +46,18 @@ class App:
         return snapshots
 
     def table(self, snapshots: Sequence[Snapshot], wrap: bool = False) -> str:
-        width = shutil.get_terminal_size().columns
+        # Off a terminal - a pipe, a file, ssh without a tty - there is no width to fit,
+        # and a description cut short is lost to grep, so print it whole.
+        if self.console.out.isatty():
+            width = shutil.get_terminal_size().columns
+        else:
+            width = sys.maxsize
         return format_table(snapshots, self.console.style, width, wrap)
+
+
+def rollback_pending(config: Config) -> int | None:
+    """The snapshot / still is, when a rollback is waiting for a reboot."""
+    return rollback.pending_rollback(config, system.find_mount(ROOT_MOUNT, system.read_mounts()))
 
 
 def require_confirmation_possible(assume_yes: bool) -> None:
@@ -73,6 +85,15 @@ def cmd_list(app: App, args: argparse.Namespace) -> int:
 
 
 def cmd_snapshot(app: App, args: argparse.Namespace) -> int:
+    pending = rollback_pending(app.config)
+    if pending is not None:
+        message = rollback.pending_rollback_message(pending)
+        if args.kind == "timer":
+            # A snapshot of the system being left would only be clutter, and a failed
+            # unit until the reboot would be noise: the next scheduled run takes it.
+            app.console.info(f"{message}; skipping the scheduled snapshot")
+            return 0
+        raise PatrolError(f"{message}; reboot first")
     with app.store.lock():
         snapshot = app.store.create(
             ROOT_MOUNT, kind=args.kind, description=args.description, keep=args.keep
@@ -150,6 +171,12 @@ def cmd_rollback(app: App, args: argparse.Namespace) -> int:
         f"rolled back to snapshot {target.id}; the previous state is kept as snapshot {saved.id}"
     )
     app.console.info("reboot to start the restored system")
+    journal = app.config.snapshots_dir / str(saved.id) / SUBVOLUME_NAME / "var/log/journal"
+    try:
+        journal /= MACHINE_ID.read_text().strip()
+    except OSError:
+        journal /= "<machine-id>"
+    app.console.info(f"logs from before the rollback stay in snapshot {saved.id}: journalctl -D {journal}")
     return 0
 
 
@@ -160,8 +187,12 @@ def cmd_check(app: App, args: argparse.Namespace) -> int:
     mounts = system.read_mounts()
 
     root = system.find_mount(ROOT_MOUNT, mounts)
+    pending = rollback.pending_rollback(config, root)
     if root is None or root.fstype != "btrfs":
         problems.append("/ is not a btrfs filesystem")
+    elif pending is not None:
+        # Not a problem: / is the previous system until the reboot that starts the restored one.
+        app.console.warn(f"{rollback.pending_rollback_message(pending)}; reboot to start the restored system")
     elif root.root != f"/{config.root_subvolume}":
         problems.append(
             f"/ is subvolume {root.root!r}, "
@@ -311,6 +342,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.needs_root and os.geteuid() != 0:
             raise PatrolError(f"'btrfs-patrol {args.command}' must be run as root")
         if args.command == "dnf-hook":
+            if sys.stdin.isatty():
+                # It would wait on the terminal for the plugin's replies.
+                raise PatrolError("'btrfs-patrol dnf-hook' is run by dnf's actions plugin, not by hand")
             return dnf.run_hook(args.phase, args.config, console)
         if args.command == "setup":
             return cmd_setup(args, console)
