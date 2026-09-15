@@ -4,7 +4,7 @@ Release:        %autorelease
 Summary:        Btrfs snapshot manager and rollback tool for Fedora
 
 License:        GPL-3.0-or-later
-URL:            https://github.com/OWNER/btrfs-patrol
+URL:            https://github.com/jccl1706/btrfs-patrol
 Source:         %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 
 BuildArch:      noarch

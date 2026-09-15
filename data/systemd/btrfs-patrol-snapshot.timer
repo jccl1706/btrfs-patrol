@@ -1,6 +1,6 @@
 [Unit]
 Description=Daily btrfs-patrol snapshot
-Documentation=https://github.com/OWNER/btrfs-patrol
+Documentation=https://github.com/jccl1706/btrfs-patrol
 
 [Timer]
 OnCalendar=daily
