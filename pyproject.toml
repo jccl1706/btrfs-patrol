@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "btrfs-patrol"
-version = "0.1.1"
+version = "0.2.0"
 description = "Btrfs snapshot manager and one-command rollback tool for Fedora"
 readme = "README.md"
 license = "GPL-3.0-or-later"

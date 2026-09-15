@@ -1,0 +1,786 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.\" Manual page for btrfs-patrol. Preview with: man -l man/btrfs-patrol.8
+.TH BTRFS-PATROL 8 "2026-09-15" "btrfs-patrol 0.2.0" "System Administration"
+.\" Left-aligned and unhyphenated, so commands, paths and package names stay whole.
+.\" The man macros reapply these at every paragraph, from groff's AD string and HY register.
+.ds AD l
+.nr HY 0
+.ad l
+.nh
+.
+.SH NAME
+btrfs-patrol \- btrfs snapshot manager and rollback tool for Fedora
+.
+.SH SYNOPSIS
+.B btrfs-patrol
+.RB [ \-\-config
+.IR PATH ]
+.RB [ \-\-color
+.IR WHEN ]
+.I COMMAND
+.RI [ ARGUMENTS ]
+.PP
+.B btrfs-patrol
+.B \-\-version
+.PP
+.B btrfs-patrol
+.RI [ COMMAND ]
+.B \-\-help
+.
+.SH DESCRIPTION
+.B btrfs-patrol
+takes, lists and prunes read-only snapshots of the btrfs subvolume mounted at
+.IR / ,
+takes a snapshot before each
+.BR dnf5 (8)
+transaction and once a day, and rolls the system back to an earlier snapshot
+with one command.
+.PP
+A rollback replaces the root subvolume with a writable copy of the chosen
+snapshot. The system you leave is not lost: it is kept as a new snapshot of
+kind
+.BR rollback ,
+so you can roll forward to it again. Every step of a rollback is checked
+first, and if a step fails, the steps already done are undone. Nothing
+reboots on its own; the restored system starts at the next boot.
+.PP
+It works with Fedora's layout: the root subvolume is found at boot through
+the btrfs default subvolume or with
+.BR subvol= ,
+kernels live in a separate
+.IR /boot ,
+and the root may be on LUKS and LVM.
+.PP
+Snapshots are not backups. They live on the same filesystem as the system
+they protect; see
+.BR CAVEATS .
+.
+.SH GLOBAL OPTIONS
+.TP
+.BR \-c ", " \-\-config " \fIPATH\fR"
+Use the configuration file
+.I PATH
+instead of
+.BR $BTRFS_PATROL_CONFIG ,
+or, when that is not set,
+.IR /etc/btrfs\-patrol/config.toml .
+.TP
+.BR \-\-color " \fIWHEN\fR"
+Colors in the output:
+.B auto
+(on a terminal only, and not when
+.B NO_COLOR
+is set or
+.B TERM
+is
+.BR dumb ),
+.BR always ,
+or
+.BR never .
+Overrides
+.B output.color
+in the configuration.
+.TP
+.B \-\-version
+Print the version and exit.
+.TP
+.BR \-h ", " \-\-help
+Show help for
+.B btrfs-patrol
+or for one command, and exit.
+.
+.SH COMMANDS
+Every command except
+.B list
+and
+.B check
+must be run as root.
+.B list
+and
+.B check
+read the snapshots directory, which is readable only by root, so in practice
+they need root too.
+.
+.TP
+.B setup \fR[\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-y\fR|\fB\-\-yes\fR]
+Set the system up for
+.BR btrfs-patrol .
+Run it once after installing. It works out what is missing, shows it, asks
+for confirmation, and then does only the missing steps, so it is safe to run
+again \- also after a step failed:
+.RS
+.IP 1. 4
+Write the configuration file, if there is none, with the root subvolume
+detected from the mount at
+.IR / .
+An existing configuration is kept.
+.IP 2. 4
+Create a top-level subvolume for the snapshots
+.RB ( snapshots ),
+next to the root subvolume and readable only by root, because old snapshots
+can contain setuid programs with known security holes.
+.IP 3. 4
+Create the mount point
+.RI ( /.snapshots ),
+add it to
+.I /etc/fstab
+with the root's mount options, after saving the old file as
+.IR /etc/fstab.btrfs\-patrol\-backup ,
+and mount it.
+.IP 4. 4
+When an SELinux policy is installed, add the snapshots directory to
+.IR /etc/selinux/fixfiles_exclude_dirs ;
+when SELinux is enabled, give the snapshots directory and its entries their
+labels. See
+.BR SELINUX .
+.IP 5. 4
+Enable and start the daily snapshot timer, if its unit is installed and
+disabled. A masked timer is left alone.
+.RE
+.IP
+Afterwards it runs
+.BR check .
+It refuses rather than guesses when something is in the way: a root that is
+not btrfs or is the top-level subvolume, a configuration for a different root
+subvolume, something else mounted at the snapshots directory, a non-empty
+snapshots directory, or an
+.I /etc/fstab
+line that mounts it differently.
+.RS
+.TP
+.BR \-n ", " \-\-dry\-run
+Show what setup would do, and change nothing.
+.TP
+.BR \-y ", " \-\-yes
+Do not ask for confirmation.
+.RE
+.
+.TP
+.B list \fR[\fISELECTOR\fR] [\fB\-v\fR|\fB\-\-verbose\fR]
+List snapshots, or only those matching
+.I SELECTOR
+(see
+.BR SELECTORS ),
+as a table of ID, date, time, kernel, kind and description. A
+.B *
+before an ID marks a kept snapshot. On a terminal, long descriptions are cut
+to fit its width; written to a pipe or a file, they are printed whole.
+.RS
+.TP
+.BR \-v ", " \-\-verbose
+Wrap long descriptions onto further lines instead of cutting them.
+.RE
+.
+.TP
+.B snapshot \fR[\fB\-d\fR|\fB\-\-description\fR \fITEXT\fR] [\fB\-k\fR|\fB\-\-keep\fR]
+Take a read-only snapshot of the root subvolume, of kind
+.BR manual ,
+then prune (see
+.BR prune ).
+Refused while a rollback is waiting for its reboot.
+.RS
+.TP
+.BR \-d ", " \-\-description " \fITEXT\fR"
+A description to remember the snapshot by.
+.TP
+.BR \-k ", " \-\-keep
+Keep the snapshot: never prune it.
+.RE
+.
+.TP
+.B describe \fIID\fR \fIDESCRIPTION\fR
+Replace the description of snapshot
+.IR ID .
+.
+.TP
+.B keep \fISELECTOR\fR
+Keep the matching snapshots: pruning never deletes them, and they do not count
+toward
+.BR retention.max_snapshots .
+.
+.TP
+.B unkeep \fISELECTOR\fR
+Let the matching snapshots be pruned again.
+.
+.TP
+.B delete \fISELECTOR\fR [\fB\-y\fR|\fB\-\-yes\fR]
+Show the matching snapshots, ask for confirmation, and delete them \- kept
+snapshots included. A snapshot's ID is not reused after it is deleted.
+.RS
+.TP
+.BR \-y ", " \-\-yes
+Do not ask for confirmation.
+.RE
+.
+.TP
+.B prune
+Delete the oldest snapshots that are not kept, until at most
+.B retention.max_snapshots
+of them remain. Taking a manual, timer or dnf snapshot prunes too.
+.
+.TP
+.B rollback \fIID\fR [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-y\fR|\fB\-\-yes\fR]
+Roll the root subvolume back to snapshot
+.IR ID ,
+then reboot to use it. It shows the snapshot and the plan, prints any
+warnings, and asks for confirmation. See
+.BR ROLLBACK .
+.RS
+.TP
+.BR \-n ", " \-\-dry\-run
+Run every check and show the plan, and change nothing.
+.TP
+.BR \-y ", " \-\-yes
+Do not ask for confirmation.
+.RE
+.
+.TP
+.B check
+Compare the configuration with what is mounted, and look for broken
+snapshots: a root that is not btrfs or is not the configured root subvolume,
+a snapshots directory that is not mounted, is another subvolume or is on
+another filesystem, and snapshots with unreadable metadata or without their
+subvolume. These are reported as errors. It warns, without failing, when a
+rollback is waiting for its reboot, and about SELinux labels or the relabel
+exclusion missing.
+.
+.TP
+.B dnf\-hook pre\fR|\fBpost
+Take a snapshot for a dnf5 transaction. It is run by the
+.BR libdnf5\-actions (8)
+plugin, not by hand, and refuses to run from a terminal. See
+.BR "DNF TRANSACTIONS" .
+.
+.SH SELECTORS
+.BR list ,
+.BR keep ,
+.B unkeep
+and
+.B delete
+take a selector:
+.TP
+.IR ID [ , ID ...]
+Snapshot IDs and ranges, separated by commas, such as
+.BR 3 ,
+.BR 1,10,20\-23 .
+An ID that does not exist is an error; a range selects the snapshots that
+exist in it, in either order.
+.TP
+.BI date= TEXT
+The date, as
+.IR YYYY\-MM\-DD ,
+contains
+.IR TEXT ,
+such as
+.B date=2026\-09
+for September 2026.
+.TP
+.BI time= TEXT
+The time, as
+.IR HH:MM:SS ,
+contains
+.IR TEXT ,
+such as
+.BR time=16: .
+.TP
+.BI kernel= TEXT
+The kernel the snapshot was taken on contains
+.IR TEXT ,
+such as
+.BR kernel=7.2 .
+.TP
+.BI kind= TEXT
+The kind contains
+.IR TEXT ,
+such as
+.B kind=dnf
+for both dnf kinds. The kinds are
+.B manual
+.RB ( snapshot ),
+.B timer
+(the daily timer),
+.B dnf\-pre
+and
+.B dnf\-post
+(around a dnf transaction), and
+.B rollback
+(the state a rollback left).
+.TP
+.BI description= TEXT
+The description contains
+.IR TEXT .
+.TP
+.BR keep=yes ", " keep=no
+Kept snapshots, or the others.
+.PP
+Text matches ignore case. A field match cannot be combined with other terms,
+so its text may contain commas. Quote selectors that contain spaces or shell
+characters, such as
+.BR "description=\(dqbefore the upgrade\(dq" .
+.
+.SH ROLLBACK
+Before changing anything,
+.B rollback
+checks that:
+.IP \(bu 2
+the snapshot has kernel modules for the running kernel, since the restored
+system could not load its drivers otherwise;
+.IP \(bu 2
+the running kernel has a boot entry, because
+.I /boot
+is not rolled back: a Boot Loader Specification Type #1 entry in
+.IR /boot/loader/entries ,
+or a unified kernel image (Type #2) in
+.I EFI/Linux
+on the EFI system partition mounted at
+.IR /boot ,
+.I /efi
+or
+.IR /boot/efi .
+An image's kernel version is read from its
+.B .uname
+section, from the Linux kernel's own header, or last from the file name
+.BR kernel\-install (8)
+gives it;
+.IP \(bu 2
+the root is found at boot by name
+.RB ( subvol= )
+or through the btrfs default subvolume, and not by subvolume ID
+.RB ( subvolid= ),
+which cannot follow a rollback; the snapshot's
+.I /etc/fstab
+and the kernel command line are read for this;
+.IP \(bu 2
+the configured root and snapshots subvolumes are the ones mounted.
+.PP
+It warns when other boot entries have kernels the snapshot has no modules
+for; choose the running kernel in the boot menu in that case. Then it:
+.IP 1. 4
+creates a snapshot entry of kind
+.BR rollback ,
+kept, for the current state;
+.IP 2. 4
+moves the current root subvolume into that entry \- the running system keeps
+using it until the reboot;
+.IP 3. 4
+creates a writable snapshot of the chosen snapshot as the new root subvolume;
+.IP 4. 4
+moves subvolumes nested inside the old root, such as
+.IR /var/lib/portables ,
+into the new one;
+.IP 5. 4
+if the root is found through the default subvolume, points the default at the
+new root and reads it back.
+.PP
+.B Rolled back:
+everything in the root subvolume, including
+.IR /etc ,
+.I /usr
+and the RPM database.
+.B Not rolled back:
+.I /home
+and every other separate subvolume, and
+.IR /boot .
+.B Kept:
+nested subvolumes, moved into the restored root.
+.PP
+.I /var/log
+is part of the root subvolume, so the journal written since the snapshot stays
+with the previous state;
+.B rollback
+prints the
+.BR journalctl (1)
+.B \-D
+command that reads it.
+.PP
+Until the reboot,
+.I /
+is still the previous system:
+.B check
+says so,
+.B snapshot
+refuses, the timer and the dnf hook skip their snapshots, a second
+.B rollback
+is refused, and whatever is installed or changed in the meantime is lost at
+the reboot. Hibernating instead of rebooting is safe: the rollback takes
+effect at the next real boot.
+.PP
+When you are happy with the restored system, delete the
+.B rollback
+snapshot to free its space, or roll back to it to undo the rollback.
+.
+.SH DNF TRANSACTIONS
+With
+.B libdnf5\-plugin\-actions
+installed, the actions file
+.I /etc/dnf/libdnf5\-plugins/actions.d/btrfs\-patrol.actions
+runs
+.B btrfs\-patrol dnf\-hook pre
+before and
+.B btrfs\-patrol dnf\-hook post
+after each transaction on the running system (not with
+.BR \-\-installroot ).
+The hook uses the plugin's json communication mode to ask which packages the
+transaction changes, so the snapshot's description says what changed, such as
+.RB \(lq "upgrade kernel\-core, mesa\-dri\-drivers +12 more; install tree" \(rq.
+.PP
+By default only the
+.B dnf\-pre
+snapshot is taken; set
+.B dnf.post_snapshot
+to also take one after, or
+.B dnf.pre_snapshot
+to false for none. Like every snapshot, a dnf snapshot prunes the oldest
+snapshots beyond
+.BR retention.max_snapshots .
+The hook does nothing until
+.B setup
+has written the configuration, skips its snapshot while a rollback is waiting
+for its reboot, and never makes a transaction fail: problems are logged to
+.I /var/log/dnf5.log
+and repeated on standard error.
+.
+.SH SCHEDULED SNAPSHOTS
+.I btrfs\-patrol\-snapshot.timer
+starts
+.I btrfs\-patrol\-snapshot.service
+once a day, shortly after midnight (up to 15 minutes later, at random), which
+takes a snapshot of kind
+.B timer
+described as
+.RB \(lq "Scheduled snapshot" \(rq.
+A day missed because the machine was off is made up at the next boot. While a
+rollback is waiting for its reboot, the service skips its snapshot and still
+succeeds.
+.PP
+The package installs the timer disabled, as Fedora does for every package's
+units, and
+.B setup
+enables it. Show when it runs next, or turn it off, with:
+.PP
+.RS
+.EX
+systemctl list\-timers btrfs\-patrol\-snapshot.timer
+sudo systemctl disable \-\-now btrfs\-patrol\-snapshot.timer
+.EE
+.RE
+.PP
+A timer turned off with
+.B systemctl mask
+stays off:
+.B setup
+enables only a timer that is disabled.
+.
+.SH SELINUX
+A full SELinux relabel, such as the one
+.BR fixfiles (8)
+runs for
+.IR /.autorelabel ,
+gives everything below the snapshots directory the policy's label for it.
+Read-only snapshots cannot be changed, but a
+.B rollback
+snapshot is the previous root subvolume and is writable: after a relabel,
+rolling back to it would boot a system whose files all have the wrong label.
+.B setup
+therefore adds the snapshots directory to
+.I /etc/selinux/fixfiles_exclude_dirs
+whenever a policy is installed, even with SELinux off, because turning SELinux
+on is exactly when a relabel runs. For the same reason, run
+.BR restorecon (8)
+on the whole system as
+.BR "restorecon \-R \-e /.snapshots /" .
+.PP
+A new btrfs subvolume has no label, so when SELinux is enabled,
+.B setup
+labels the snapshots directory, its entry directories and their metadata with
+.BR restorecon ,
+never recursively: what is inside a snapshot keeps the labels of the system it
+was taken from. Entries created later inherit the directory's label.
+.
+.SH CONFIGURATION
+The configuration is a TOML file,
+.I /etc/btrfs\-patrol/config.toml
+by default, written by
+.BR setup .
+Unknown sections or options are errors. Every option is optional; the
+defaults match Fedora's installer.
+.TP
+.B [filesystem]
+.RS
+.TP
+.BR device " = " \(dqauto\(dq
+The block device of the btrfs filesystem, such as
+.I /dev/nvme0n1p3
+or
+.IR /dev/mapper/luks\-UUID ,
+or
+.B auto
+for the device mounted at
+.IR / .
+.TP
+.BR root_subvolume " = " \(dqroot\(dq
+The subvolume mounted at
+.IR / ,
+as a path relative to the top-level subvolume.
+.TP
+.BR snapshots_subvolume " = " \(dqsnapshots\(dq
+The top-level subvolume that holds the snapshots, relative to the top-level
+subvolume. It must not be inside the root subvolume, or a rollback would move
+the snapshots away together with the root.
+.TP
+.BR snapshots_dir " = " \(dq/.snapshots\(dq
+Where
+.B snapshots_subvolume
+is mounted; an absolute path.
+.RE
+.TP
+.B [retention]
+.RS
+.TP
+.BR max_snapshots " = " 50
+How many snapshots that are not kept to leave when pruning; at least 1.
+.RE
+.TP
+.B [dnf]
+.RS
+.TP
+.BR pre_snapshot " = " true
+Take a snapshot before each dnf5 transaction.
+.TP
+.BR post_snapshot " = " false
+Also take one after each transaction.
+.RE
+.TP
+.B [output]
+.RS
+.TP
+.BR color " = " \(dqauto\(dq
+.BR auto ,
+.B always
+or
+.BR never ,
+as for
+.BR \-\-color .
+.RE
+.
+.SH FILES
+.TP
+.I /etc/btrfs\-patrol/config.toml
+The configuration.
+.TP
+.I /.snapshots/ID/snapshot
+Snapshot
+.IR ID :
+a read-only btrfs snapshot, or for kind
+.B rollback
+the writable previous root subvolume.
+.TP
+.I /.snapshots/ID/info.json
+Its metadata: format version, creation time, kernel, kind, description and
+whether it is kept.
+.TP
+.I /.snapshots/.next\-id
+The ID the next snapshot gets. It only moves forward, so IDs are never
+reused.
+.TP
+.I /.snapshots/.lock
+Held while the snapshots are being changed, so a dnf transaction and the
+timer cannot pick the same ID or prune each other's snapshots.
+.TP
+.I /etc/fstab.btrfs\-patrol\-backup
+The copy of
+.I /etc/fstab
+from before
+.B setup
+added its line.
+.TP
+.I /etc/dnf/libdnf5\-plugins/actions.d/btrfs\-patrol.actions
+The dnf5 hook.
+.TP
+.I /usr/lib/systemd/system/btrfs\-patrol\-snapshot.timer
+.TQ
+.I /usr/lib/systemd/system/btrfs\-patrol\-snapshot.service
+The daily snapshot.
+.TP
+.I /etc/selinux/fixfiles_exclude_dirs
+Directories full relabels skip; see
+.BR SELINUX .
+.TP
+.I /var/log/dnf5.log
+Where the dnf hook logs its snapshots and problems.
+.
+.SH ENVIRONMENT
+.TP
+.B BTRFS_PATROL_CONFIG
+The configuration file to use, unless
+.B \-\-config
+is given.
+.TP
+.B NO_COLOR
+When set and not empty, no colors with
+.BR "\-\-color auto" .
+.TP
+.B TERM
+When
+.BR dumb ,
+no colors with
+.BR "\-\-color auto" .
+.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, a dry run, or nothing to do.
+.TP
+.B 1
+An error, a problem found by
+.BR check ,
+or a confirmation that was declined.
+.TP
+.B 2
+Invalid command line, such as an unknown command or option.
+.TP
+.B 130
+Interrupted with Ctrl+C.
+.PP
+.B dnf\-hook
+exits 0 even when its snapshot fails, so that a transaction never fails
+because of it.
+.
+.SH EXAMPLES
+Set a system up, after seeing what will be done:
+.PP
+.RS
+.EX
+sudo btrfs\-patrol setup \-\-dry\-run
+sudo btrfs\-patrol setup
+.EE
+.RE
+.PP
+Take and keep a snapshot before a risky change:
+.PP
+.RS
+.EX
+sudo btrfs\-patrol snapshot \-d "before the new kernel" \-\-keep
+.EE
+.RE
+.PP
+List the snapshots dnf took, those taken in September 2026, and those taken
+before installing a package called tree:
+.PP
+.RS
+.EX
+sudo btrfs\-patrol list kind=dnf
+sudo btrfs\-patrol list date=2026\-09
+sudo btrfs\-patrol list description=tree
+.EE
+.RE
+.PP
+Keep snapshots 12 and 20 to 23, and delete snapshots 1 to 10:
+.PP
+.RS
+.EX
+sudo btrfs\-patrol keep 12,20\-23
+sudo btrfs\-patrol list 1\-10
+sudo btrfs\-patrol delete 1\-10
+.EE
+.RE
+.PP
+.B delete
+takes kept snapshots too, so check what a selector matches with
+.B list
+first. To be rid of old snapshots without touching kept ones, lower
+.B retention.max_snapshots
+and run
+.BR prune .
+.PP
+Undo an update that broke something. Snapshot 30 is the
+.B dnf\-pre
+snapshot taken before it; the rollback says which new snapshot keeps the
+broken state, say 31:
+.PP
+.RS
+.EX
+sudo btrfs\-patrol rollback 30 \-\-dry\-run
+sudo btrfs\-patrol rollback 30
+sudo reboot
+.EE
+.RE
+.PP
+After the reboot, check the restored system, and once it works, delete the
+broken state to free its space \- or roll back to 31 to return to it:
+.PP
+.RS
+.EX
+sudo btrfs\-patrol check
+sudo btrfs\-patrol delete 31
+.EE
+.RE
+.PP
+Recover
+.I /etc
+after deleting it by mistake, from a root shell that is still open (sudo
+itself needs
+.IR /etc ):
+.PP
+.RS
+.EX
+cp \-a /.snapshots/30/snapshot/etc /
+restorecon \-R /etc
+.EE
+.RE
+.PP
+Without a root shell, boot a live system, unlock and mount the top-level
+subvolume, copy
+.I /etc
+from
+.I snapshots/30/snapshot
+into
+.IR root ,
+and on an SELinux system create
+.I root/.autorelabel
+before rebooting.
+.
+.SH CAVEATS
+Snapshots are not backups: a failed disk, a lost LUKS header or a mistaken
+.BR mkfs (8)
+takes them too, and root can delete them. A recursive delete of
+.I /
+also empties writable
+.B rollback
+snapshots. Keep copies on another disk as well, for example with
+.BR "btrfs send" .
+.PP
+.I /home
+is a separate subvolume and is neither snapshotted nor rolled back.
+.PP
+There are no boot menu entries for snapshots yet, so a system too broken to
+log in to is recovered from a live system, as in
+.BR EXAMPLES .
+.
+.SH BUGS
+Report problems at
+.UR https://github.com/jccl1706/btrfs\-patrol/issues
+.UE .
+.
+.SH AUTHORS
+btrfs-patrol contributors.
+.PP
+btrfs-patrol is inspired by timepatrol by Alan Barros de Oliveira
+.UR https://github.com/abdeoliveira/timepatrol
+.UE ,
+in particular its rollback approach, kept snapshots and snapshot selectors. It
+is a new implementation in Python and contains no timepatrol code.
+.
+.SH SEE ALSO
+.\" \% keeps each name from being hyphenated at a line end.
+.BR \%btrfs (8),
+.BR \%btrfs\-subvolume (8),
+.BR \%dnf5 (8),
+.BR \%libdnf5\-actions (8),
+.BR \%systemd.timer (5),
+.BR \%bootctl (1),
+.BR \%kernel\-install (8),
+.BR \%fstab (5),
+.BR \%fixfiles (8),
+.BR \%restorecon (8),
+.BR \%journalctl (1)

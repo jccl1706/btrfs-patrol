@@ -1,5 +1,5 @@
 Name:           btrfs-patrol
-Version:        0.1.1
+Version:        0.2.0
 Release:        %autorelease
 Summary:        Btrfs snapshot manager and rollback tool for Fedora
 
@@ -38,6 +38,7 @@ install -Dpm 0644 data/dnf5/btrfs-patrol.actions \
 install -Dpm 0644 -t %{buildroot}%{_unitdir} \
     data/systemd/btrfs-patrol-snapshot.service \
     data/systemd/btrfs-patrol-snapshot.timer
+install -Dpm 0644 -t %{buildroot}%{_mandir}/man8 man/btrfs-patrol.8
 
 %check
 %pyproject_check_import
@@ -55,6 +56,7 @@ install -Dpm 0644 -t %{buildroot}%{_unitdir} \
 %files -f %{pyproject_files}
 %doc README.md
 %{_bindir}/btrfs-patrol
+%{_mandir}/man8/btrfs-patrol.8*
 %config(noreplace) %{_sysconfdir}/dnf/libdnf5-plugins/actions.d/btrfs-patrol.actions
 %{_unitdir}/btrfs-patrol-snapshot.service
 %{_unitdir}/btrfs-patrol-snapshot.timer

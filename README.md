@@ -2,7 +2,7 @@
 
 A btrfs snapshot manager and rollback tool for Fedora.
 
-> **Status: 0.1.1.** Every command has been tested on a Fedora
+> **Status: 0.2.0.** Every command has been tested on a Fedora
 > 44 VM and on a ThinkPad T480 (LUKS, LVM and btrfs), from source and from the
 > RPM: setup, snapshots from dnf and the timer, rollback to an older state and
 > forward again, and hibernating with a rollback waiting for its reboot - and
@@ -44,6 +44,10 @@ Selectors pick snapshots by ID (`3`, `1,10,20-23`) or by field
 
 Snapshot IDs are never reused: deleting the newest snapshot doesn't free its
 number, so an ID you noted down always means the same snapshot.
+
+The manual page, `man btrfs-patrol` (or `man -l man/btrfs-patrol.8` in a
+checkout), is the full reference: every command and option, the
+configuration, the files btrfs-patrol uses, and recovery examples.
 
 ## Setup
 
@@ -159,8 +163,9 @@ src/btrfs_patrol/
 data/
   dnf5/btrfs-patrol.actions     libdnf5-plugin-actions hook
   systemd/                      daily snapshot service and timer
+man/btrfs-patrol.8              manual page
 packaging/btrfs-patrol.spec     RPM spec for Fedora / COPR
-tests/                          unittest suite
+tests/                          unittest suite (test_man.py keeps the manual in step)
 ```
 
 ## Roadmap

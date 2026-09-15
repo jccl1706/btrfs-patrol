@@ -8,10 +8,11 @@ or a single field match:
     time=16:            time (HH:MM:SS) contains the text
     kernel=6.17         kernel version contains the text
     kind=dnf-pre        kind contains the text
-    description=gnome   description contains the text, ignoring case
+    description=gnome   description contains the text
     keep=yes            kept snapshots (keep=no for the others)
 
-Field matches can't be combined with commas, so the text may contain commas.
+Text matches ignore case. Field matches can't be combined with commas, so the
+text may contain commas.
 """
 
 from __future__ import annotations

@@ -25,7 +25,7 @@ SELECTOR_HELP = """\
 selectors:
   3, 1,10,20-23       snapshot IDs and ID ranges
   date=2026-09        text in a field: date, time, kernel, kind or description
-  description=gnome   (description matching ignores case)
+  description=gnome   (matching ignores case)
   keep=yes            kept snapshots (keep=no for the others)
 """
 
