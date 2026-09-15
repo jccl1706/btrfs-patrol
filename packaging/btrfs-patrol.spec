@@ -51,7 +51,7 @@ install -Dpm 0644 -t %{buildroot}%{_mandir}/man8 man/btrfs-patrol.8
 %systemd_preun btrfs-patrol-snapshot.timer
 
 %postun
-%systemd_postun btrfs-patrol-snapshot.timer
+%systemd_postun_with_restart btrfs-patrol-snapshot.timer
 
 %files -f %{pyproject_files}
 %doc README.md
