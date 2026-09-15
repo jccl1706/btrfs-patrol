@@ -12,6 +12,7 @@ def make_snapshot(
     kind: str = "manual",
     description: str = "",
     keep: bool = False,
+    subvolume: str = "root",
 ) -> Snapshot:
     return Snapshot(
         id=snapshot_id,
@@ -20,4 +21,5 @@ def make_snapshot(
         kind=kind,
         description=description,
         keep=keep,
+        subvolume=subvolume,
     )

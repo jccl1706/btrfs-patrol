@@ -30,9 +30,10 @@ from typing import TextIO
 
 from btrfs_patrol import config as config_mod
 from btrfs_patrol import rollback, system
+from btrfs_patrol.config import ROOT
 from btrfs_patrol.errors import PatrolError
 from btrfs_patrol.output import Console
-from btrfs_patrol.snapshots import ROOT_MOUNT, SnapshotStore
+from btrfs_patrol.snapshots import ROOT_MOUNT, Snapshot, SnapshotStore
 
 REPLY_TIMEOUT = 10.0
 
@@ -133,11 +134,15 @@ def run_hook(
         plugin.log("WARNING", message)
         console.warn(f"btrfs-patrol: {message}")
 
+    kind = f"dnf-{phase}"
+    created: list[Snapshot] = []
+    pruned: list[Snapshot] = []
     try:
         config = config_mod.load(path)
         if not (config.dnf_pre_snapshot if phase == "pre" else config.dnf_post_snapshot):
             return 0
-        pending = rollback.pending_rollback(config, system.find_mount(ROOT_MOUNT, system.read_mounts()))
+        mounts = system.read_mounts()
+        pending = rollback.pending_rollback(config, system.find_mount(ROOT_MOUNT, mounts))
         if pending is not None:
             # This transaction changes the system being left, so what it installs is gone
             # after the reboot - worth saying while the user can still stop and reboot first.
@@ -146,16 +151,40 @@ def run_hook(
                 "and this transaction's changes are lost at the reboot"
             )
             return 0
+        # Root, and the other subvolumes that asked for dnf snapshots - except one whose
+        # own rollback is waiting for a reboot, which would only snapshot the state being left.
+        subvolumes = [
+            subvolume
+            for subvolume in config.managed()
+            if subvolume.dnf
+            and (
+                subvolume.name == ROOT
+                or rollback.pending_rollback(config, system.find_mount(subvolume.path, mounts)) is None
+            )
+        ]
         description = describe_transaction(plugin.transaction_packages()) or FALLBACK_DESCRIPTION
         store = SnapshotStore(config.snapshots_dir)
         with store.lock():
-            snapshot = store.create(ROOT_MOUNT, kind=f"dnf-{phase}", description=description)
-            pruned = store.prune(config.max_snapshots)
+            for subvolume in subvolumes:
+                created.append(
+                    store.create(
+                        subvolume.path, kind=kind, description=description, subvolume=subvolume.name
+                    )
+                )
+                pruned.extend(store.prune(subvolume.max_snapshots, subvolume.name))
     except (PatrolError, OSError) as e:
-        warn(f"dnf {phase}-transaction snapshot failed: {e}")
+        after = f" (after creating {_listed(created)})" if created else ""
+        warn(f"dnf {phase}-transaction snapshot failed{after}: {e}")
         return 0
-    message = f"created snapshot {snapshot.id} ({snapshot.kind}): {snapshot.description}"
+    if len(created) == 1 and created[0].subvolume == ROOT:
+        message = f"created snapshot {created[0].id} ({kind}): {description}"
+    else:
+        message = f"created snapshots {_listed(created)} ({kind}): {description}"
     if pruned:
         message += f"; pruned {', '.join(str(s.id) for s in pruned)}"
     plugin.log("INFO", message)
     return 0
+
+
+def _listed(snapshots: Sequence[Snapshot]) -> str:
+    return ", ".join(f"{s.id} ({s.subvolume})" for s in snapshots)

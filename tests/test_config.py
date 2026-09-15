@@ -55,6 +55,56 @@ class ParseTests(unittest.TestCase):
                 config.parse(data)
 
 
+class SubvolumeTests(unittest.TestCase):
+    def test_root_alone_by_default(self):
+        c = config.parse({})
+        self.assertEqual(c.subvolumes, ())
+        self.assertEqual([s.name for s in c.managed()], ["root"])
+        self.assertEqual(c.root, config.ManagedSubvolume("root", Path("/"), 50, timer=True, dnf=True))
+
+    def test_defaults(self):
+        c = config.parse({"retention": {"max_snapshots": 30}, "subvolumes": {"home": {"path": "/home"}}})
+        [home] = c.subvolumes
+        self.assertEqual(home, config.ManagedSubvolume("home", Path("/home"), 30, timer=True, dnf=False))
+        self.assertEqual([s.name for s in c.managed()], ["root", "home"])
+        self.assertEqual(c.find("home"), home)
+        self.assertEqual(c.find("root"), c.root)
+        self.assertIsNone(c.find("data"))
+
+    def test_explicit_options(self):
+        c = config.parse({"subvolumes": {"log": {
+            "path": "/var/log", "max_snapshots": 5, "timer": False, "dnf": True,
+        }}})
+        self.assertEqual(
+            c.subvolumes, (config.ManagedSubvolume("log", Path("/var/log"), 5, timer=False, dnf=True),)
+        )
+
+    def test_invalid_subvolumes(self):
+        for subvolumes, message in (
+            ({"root": {"path": "/srv"}}, "root subvolume's"),
+            ({"my home": {"path": "/home"}}, "letters, digits"),
+            ({"home": {}}, "needs a path"),
+            ({"home": {"path": "home"}}, "absolute path"),
+            ({"home": {"path": "/home/../etc"}}, "without '..'"),
+            ({"home": {"path": "/"}}, "always snapshotted"),
+            ({"snap": {"path": "/.snapshots/1"}}, "inside the snapshots directory"),
+            ({"home": {"path": "/home", "max_snapshots": 0}}, "at least 1"),
+            ({"home": {"path": "/home"}, "home2": {"path": "/home"}}, "already"),
+            ({"home": {"path": "/home", "keep": True}}, "unknown option"),
+            ({"home": {"path": "/home", "timer": "yes"}}, "must be a bool"),
+            ({"home": "/home"}, "must be a table"),
+        ):
+            with self.subTest(subvolumes=subvolumes), self.assertRaisesRegex(PatrolError, message):
+                config.parse({"subvolumes": subvolumes})
+        with self.assertRaisesRegex(PatrolError, "one \\[subvolumes.<name>\\] table"):
+            config.parse({"subvolumes": ["home"]})
+
+    def test_example_configuration_has_none(self):
+        import tomllib
+
+        self.assertEqual(config.parse(tomllib.loads(config.example_text())).subvolumes, ())
+
+
 class LoadTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

@@ -2,7 +2,7 @@
 
 A btrfs snapshot manager and rollback tool for Fedora.
 
-> **Status: 0.2.2.** Every command has been tested on a Fedora
+> **Status: 0.3.0.** Every command has been tested on a Fedora
 > 44 VM and on a ThinkPad T480 (LUKS, LVM and btrfs), from source and from the
 > RPM: setup, snapshots from dnf and the timer, rollback to an older state and
 > forward again, and hibernating with a rollback waiting for its reboot - and
@@ -26,6 +26,8 @@ and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
 - **Knows about `/boot`**: Fedora keeps kernels outside the root subvolume, so
   rollback refuses snapshots whose kernel can't be booted. Both kinds of boot
   entry count: `/boot/loader/entries` files and unified kernel images.
+- **Other subvolumes too**: `/home`, or any other subvolume, can get snapshots
+  of its own and be rolled back on its own.
 - **No dependencies** beyond Python 3.11+, `btrfs-progs` and `util-linux`.
 
 ## Install
@@ -49,19 +51,19 @@ and source RPM, with their SHA-256 sums, for installing without the repository.
 ```
 btrfs-patrol setup [--dry-run]            set the system up (run once)
 btrfs-patrol list [SELECTOR] [-v]         list snapshots
-btrfs-patrol snapshot [-d TEXT] [--keep]  take a snapshot of /
+btrfs-patrol snapshot [-d TEXT] [--keep]  take snapshots of / and other subvolumes
 btrfs-patrol describe ID TEXT             change a snapshot's description
 btrfs-patrol keep SELECTOR                protect snapshots from pruning
 btrfs-patrol unkeep SELECTOR              let snapshots be pruned again
 btrfs-patrol delete SELECTOR [--yes]      delete snapshots
 btrfs-patrol prune                        delete snapshots beyond the limit
 btrfs-patrol check                        check configuration, mounts and snapshots
-btrfs-patrol rollback ID [--dry-run]      roll / back to a snapshot, then reboot
+btrfs-patrol rollback ID [--dry-run]      roll a subvolume back to a snapshot, then reboot
 ```
 
 Selectors pick snapshots by ID (`3`, `1,10,20-23`) or by field
 (`date=2026-09`, `time=16:`, `kernel=6.17`, `kind=dnf-pre`,
-`description=gnome`, `keep=yes`).
+`description=gnome`, `subvolume=home`, `keep=yes`).
 
 Snapshot IDs are never reused: deleting the newest snapshot doesn't free its
 number, so an ID you noted down always means the same snapshot.
@@ -150,6 +152,38 @@ subvolume (Fedora's installer) or by name with `subvol=`. It refuses setups
 that mount the root by subvolume ID (`subvolid=`), which can't follow a
 rollback. If any step fails, the steps already done are undone.
 
+## Other subvolumes
+
+Besides the root subvolume, btrfs-patrol can take snapshots of other
+subvolumes on the same filesystem, such as `/home`: add a table for each to
+`/etc/btrfs-patrol/config.toml`, then run `check`.
+
+```toml
+[subvolumes.home]
+path = "/home"        # its mount point, or its path inside another subvolume
+max_snapshots = 20    # default: retention.max_snapshots
+timer = true          # in the daily snapshot (default: true)
+dnf = false           # in dnf's snapshots too (default: false)
+```
+
+- **Snapshots:** `snapshot` and the daily timer take one snapshot of each
+  subvolume, with an ID each; `snapshot --subvolume home` takes just that one.
+  dnf only snapshots root, unless a table says `dnf = true`.
+- **Listing and pruning:** `list` gets a SUBVOLUME column, `subvolume=home`
+  selects, and each subvolume is pruned against its own `max_snapshots`.
+- **Rollback:** each subvolume is rolled back on its own. `rollback 42` restores
+  the subvolume snapshot 42 is of and leaves the others alone, so undoing a bad
+  update never throws away your documents, and restoring `/home` never touches
+  the system. A subvolume mounted on its own must be mounted by `subvol=` in
+  `/etc/fstab`, and is used from the next reboot; one reached through its path
+  inside another subvolume, such as `/var/log`, is replaced at once.
+- **Subvolumes inside root** aren't part of root's snapshots, so a rollback of
+  root leaves them as they are, and `check` warns about it. That is the point
+  for `/var/log`, but think twice before making `/var/lib` one.
+
+The path has to be a subvolume already: btrfs-patrol doesn't turn a directory
+into one.
+
 ## Development
 
 No packages need to be installed; the tests use the standard library's
@@ -191,7 +225,9 @@ tests/                          unittest suite (test_man.py keeps the manual in 
 
 ## Roadmap
 
-1. Boot menu entries for snapshots, for systemd-boot and GRUB, so a system
+1. A command that turns an existing directory, such as `/var/log`, into a
+   subvolume safely, so it can be snapshotted and rolled back on its own.
+2. Boot menu entries for snapshots, for systemd-boot and GRUB, so a system
    too broken to log in to (after `rm -rf /etc`, say) can boot a snapshot and
    be rolled back from there, without a live USB. The entries would boot a
    snapshot read-only, with a kernel it has modules for, and be kept in step

@@ -62,6 +62,14 @@ class FieldSelectorTests(unittest.TestCase):
         with self.assertRaises(PatrolError):
             select("keep=maybe", SNAPSHOTS)
 
+    def test_subvolume_matches_the_whole_name(self):
+        snapshots = [*SNAPSHOTS, make_snapshot(9, subvolume="home")]
+        self.assertEqual(ids(select("subvolume=home", snapshots)), [9])
+        self.assertEqual(ids(select("subvolume=ROOT", snapshots)), [1, 2, 5, 7])
+        self.assertEqual(select("subvolume=hom", snapshots), [])
+        with self.assertRaises(PatrolError):
+            select("subvolume=", snapshots)
+
     def test_unknown_field_or_empty_text(self):
         with self.assertRaisesRegex(PatrolError, "unknown selector field"):
             select("comment=x", SNAPSHOTS)

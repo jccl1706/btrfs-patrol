@@ -11,7 +11,6 @@ from typing import TextIO
 
 from btrfs_patrol.snapshots import Snapshot
 
-HEADERS = ("ID", "DATE", "TIME", "KERNEL", "KIND", "DESCRIPTION")
 GAP = "  "
 MIN_DESCRIPTION_WIDTH = 20
 
@@ -67,26 +66,33 @@ class Console:
 
 
 def format_table(
-    snapshots: Sequence[Snapshot], style: Style, width: int, wrap: bool = False
+    snapshots: Sequence[Snapshot],
+    style: Style,
+    width: int,
+    wrap: bool = False,
+    show_subvolume: bool = False,
 ) -> str:
     """Render snapshots as a table that fits in width columns.
 
     Long descriptions are truncated with '…', or wrapped onto indented lines
-    when wrap is true. Kept snapshots are marked with '*' before their ID.
+    when wrap is true. Kept snapshots are marked with '*' before their ID. The
+    SUBVOLUME column is only shown when asked for, so a system that snapshots
+    root alone keeps the narrower table.
     """
+    headers = ["ID", "DATE", "TIME", *(["SUBVOLUME"] if show_subvolume else []), "KERNEL", "KIND"]
     rows = [
         (
             f"{'*' if s.keep else ''}{s.id}",
             s.created.strftime("%Y-%m-%d"),
             s.created.strftime("%H:%M:%S"),
+            *([s.subvolume] if show_subvolume else []),
             s.kernel,
             s.kind,
         )
         for s in snapshots
     ]
     widths = [
-        max([len(header), *(len(row[i]) for row in rows)])
-        for i, header in enumerate(HEADERS[:-1])
+        max([len(header), *(len(row[i]) for row in rows)]) for i, header in enumerate(headers)
     ]
     indent = sum(widths) + len(GAP) * len(widths)
     description_width = max(width - indent, MIN_DESCRIPTION_WIDTH)
@@ -97,7 +103,7 @@ def format_table(
         rest = (value.ljust(w) for value, w in zip(values[1:], widths[1:]))
         return GAP.join([first, *rest]) + GAP
 
-    lines = [style.bold(cells(HEADERS[:-1]) + HEADERS[-1])]
+    lines = [style.bold(cells(headers) + "DESCRIPTION")]
     for snapshot, row in zip(snapshots, rows):
         prefix = cells(row)
         if snapshot.keep:

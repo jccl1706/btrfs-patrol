@@ -7,7 +7,7 @@ from pathlib import Path
 
 from btrfs_patrol import __version__
 from btrfs_patrol.cli import build_parser
-from btrfs_patrol.config import _SCHEMA
+from btrfs_patrol.config import _SCHEMA, _SUBVOLUME_SCHEMA, SUBVOLUMES_SECTION
 
 MAN_PAGE = Path(__file__).resolve().parent.parent / "man" / "btrfs-patrol.8"
 
@@ -61,6 +61,12 @@ class ManPageTests(unittest.TestCase):
             for option in options:
                 with self.subTest(option=f"{section}.{option}"):
                     self.assertTrue(documented(self.page, f".BR {option} "), f"{section}.{option}")
+
+    def test_every_subvolume_option_is_documented(self):
+        self.assertIn(f"[{SUBVOLUMES_SECTION}.", self.page)
+        for option in _SUBVOLUME_SCHEMA:
+            with self.subTest(option=option):
+                self.assertTrue(documented(self.page, f".BR {option} "), option)
 
 
 if __name__ == "__main__":

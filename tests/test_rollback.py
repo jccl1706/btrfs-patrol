@@ -8,7 +8,7 @@ from unittest import mock
 
 from support import make_snapshot
 
-from btrfs_patrol import boot, btrfs, rollback
+from btrfs_patrol import boot, btrfs, rollback, system
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.btrfs import Subvolume
 from btrfs_patrol.errors import PatrolError
@@ -16,8 +16,10 @@ from btrfs_patrol.rollback import (
     DEFAULT_SUBVOLUME,
     RollbackPlan,
     boot_method,
+    fstab_method,
     nested_subvolumes,
     pending_rollback,
+    pending_rollback_message,
 )
 from btrfs_patrol.snapshots import SnapshotStore
 from btrfs_patrol.system import Mount
@@ -54,6 +56,21 @@ class BootMethodTests(unittest.TestCase):
                 boot_method("root", fstab, cmdline)
 
 
+class FstabMethodTests(unittest.TestCase):
+    def test_mounted_by_name(self):
+        self.assertEqual(fstab_method(Path("/home"), "home", FEDORA_FSTAB), "subvol=home in /etc/fstab")
+
+    def test_refused_setups(self):
+        for fstab, message in (
+            (FEDORA_FSTAB.replace("noatime,subvol=home", "noatime,subvolid=257"), "subvolid"),
+            (FEDORA_FSTAB.replace("noatime,subvol=home", "noatime"), "no subvol= option"),
+            (FEDORA_FSTAB.replace("subvol=home", "subvol=@home"), "subvol=@home"),
+            (FEDORA_FSTAB.replace("/home ", "/srv  "), "no line for /home"),
+        ):
+            with self.subTest(fstab=fstab), self.assertRaisesRegex(PatrolError, message):
+                fstab_method(Path("/home"), "home", fstab)
+
+
 class PendingRollbackTests(unittest.TestCase):
     def setUp(self):
         self.config = config_mod.parse({})
@@ -70,6 +87,13 @@ class PendingRollbackTests(unittest.TestCase):
         self.assertIsNone(self.pending("/snapshots/x/snapshot"))
         self.assertIsNone(self.pending("/snapshots/8/snapshot", fstype="ext4"))
         self.assertIsNone(pending_rollback(self.config, None))
+
+    def test_message_names_the_path(self):
+        self.assertIn("/ is still the previous system, kept as snapshot 8", pending_rollback_message(8))
+        self.assertIn(
+            "/home is still the previous state, kept as snapshot 8",
+            pending_rollback_message(8, Path("/home")),
+        )
 
 
 class NestedSubvolumeTests(unittest.TestCase):
@@ -187,6 +211,46 @@ class ExecuteTests(unittest.TestCase):
         ):
             self.plan().execute()
 
+    def with_home(self):
+        return config_mod.parse({
+            "filesystem": {"snapshots_dir": str(self.store.directory)},
+            "subvolumes": {"home": {"path": "/home"}, "log": {"path": "/var/log"}},
+        })
+
+    def test_rollback_of_another_subvolume(self):
+        home = self.top / "home"
+        (home / "jc").mkdir(parents=True)
+        (home / "jc/notes").write_text("current")
+        target = make_snapshot(5, subvolume="home")
+        self.store.path(5).mkdir()
+        self.store.save(target)
+        (self.store.subvolume(5) / "jc").mkdir(parents=True)
+        (self.store.subvolume(5) / "jc/notes").write_text("old")
+        config = self.with_home()
+        plan = RollbackPlan(
+            config, self.store, target, self.top, "/dev/vda2", 257, "subvol=home in /etc/fstab",
+            [], None, subvolume=config.find("home"), subvolume_path="home",
+        )
+        self.assertIn("takes effect:       at the next reboot", "\n".join(plan.describe()))
+        saved = plan.execute()
+        self.assertEqual((saved.id, saved.subvolume, saved.kind, saved.keep), (6, "home", "rollback", True))
+        self.assertEqual((home / "jc/notes").read_text(), "old")
+        self.assertEqual((self.store.subvolume(6) / "jc/notes").read_text(), "current")
+        # Root and the default subvolume are left alone.
+        self.assertEqual((self.root / "etc/state").read_text(), "current")
+        self.btrfs["set_default_subvolume"].assert_not_called()
+
+    def test_a_subvolume_inside_root_takes_effect_at_once(self):
+        config = self.with_home()
+        plan = RollbackPlan(
+            config, self.store, make_snapshot(1, subvolume="log"), self.top, "/dev/vda2", 270,
+            "its path inside the 'root' subvolume", [], None,
+            subvolume=config.find("log"), subvolume_path="root/var/log", mounted=False,
+        )
+        text = "\n".join(plan.describe())
+        self.assertIn("log, root/var/log (ID 270)", text)
+        self.assertIn("takes effect:       at once", text)
+
 
 class PrepareTests(unittest.TestCase):
     """The checks prepare() makes before mounting anything."""
@@ -217,6 +281,64 @@ class PrepareTests(unittest.TestCase):
         with mock.patch.object(boot, "installed_kernel_versions", return_value={"0.0.1-other"}):
             with self.assertRaisesRegex(PatrolError, "has no boot entry"):
                 self.prepare()
+
+
+class PrepareOtherSubvolumeTests(unittest.TestCase):
+    """The checks prepare() makes before mounting anything, for a subvolume other than root."""
+
+    ROOT_MOUNT = Mount("/root", "/", "btrfs", "/dev/vda2")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        snapshots = self.dir / "snapshots"
+        snapshots.mkdir()
+        self.store = SnapshotStore(snapshots)
+        self.config = config_mod.parse({
+            "filesystem": {"snapshots_dir": str(snapshots)},
+            "subvolumes": {"home": {"path": "/home"}},
+        })
+        self.target = self.add(1, "home")
+
+    def add(self, snapshot_id, subvolume):
+        snapshot = make_snapshot(snapshot_id, subvolume=subvolume)
+        self.store.path(snapshot_id).mkdir()
+        self.store.save(snapshot)
+        self.store.subvolume(snapshot_id).mkdir()
+        return snapshot
+
+    def prepare(self, mounts, target=None):
+        with mock.patch.object(system, "read_mounts", return_value=mounts):
+            with rollback.prepare(self.config, self.store, target or self.target):
+                pass
+
+    def test_refuses_a_subvolume_that_is_not_configured(self):
+        with self.assertRaisesRegex(PatrolError, "'data', which isn't in the configuration"):
+            self.prepare([self.ROOT_MOUNT], self.add(2, "data"))
+
+    def test_refuses_while_root_waits_for_a_reboot(self):
+        mounts = [Mount("/snapshots/8/snapshot", "/", "btrfs", "/dev/vda2"), Mount("/home", "/home", "btrfs", "/dev/vda2")]
+        with self.assertRaisesRegex(PatrolError, "/ is still the previous system.*reboot first"):
+            self.prepare(mounts)
+
+    def test_refuses_while_home_waits_for_a_reboot(self):
+        mounts = [self.ROOT_MOUNT, Mount("/snapshots/9/snapshot", "/home", "btrfs", "/dev/vda2")]
+        with self.assertRaisesRegex(PatrolError, "/home is still the previous state.*reboot first"):
+            self.prepare(mounts)
+
+    def test_refuses_home_on_another_filesystem(self):
+        mounts = [self.ROOT_MOUNT, Mount("/", "/home", "xfs", "/dev/vdb1")]
+        with self.assertRaisesRegex(PatrolError, "not on the btrfs filesystem mounted at /"):
+            self.prepare(mounts)
+
+    def test_refuses_home_mounted_by_subvolume_id(self):
+        fstab = self.dir / "fstab"
+        fstab.write_text(FEDORA_FSTAB.replace("noatime,subvol=home", "noatime,subvolid=257"))
+        mounts = [self.ROOT_MOUNT, Mount("/home", "/home", "btrfs", "/dev/vda2")]
+        with mock.patch.object(rollback, "FSTAB", fstab):
+            with self.assertRaisesRegex(PatrolError, "subvolid"):
+                self.prepare(mounts)
 
 
 if __name__ == "__main__":

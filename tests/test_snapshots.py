@@ -47,6 +47,27 @@ class SnapshotJsonTests(unittest.TestCase):
         with self.assertRaises(PatrolError):
             Snapshot.from_json(3, [])
 
+    def test_root_snapshots_keep_format_1(self):
+        data = make_snapshot(3).to_json()
+        self.assertEqual(data["format"], 1)
+        self.assertNotIn("subvolume", data)
+        self.assertEqual(Snapshot.from_json(3, data).subvolume, "root")
+
+    def test_other_subvolumes_are_named_in_format_2(self):
+        snapshot = make_snapshot(3, subvolume="home")
+        data = snapshot.to_json()
+        self.assertEqual((data["format"], data["subvolume"]), (2, "home"))
+        self.assertEqual(Snapshot.from_json(3, data), snapshot)
+
+    def test_format_2_needs_a_subvolume(self):
+        data = make_snapshot(3, subvolume="home").to_json()
+        for change in ({"subvolume": ""}, {"subvolume": 7}):
+            with self.subTest(change=change), self.assertRaises(PatrolError):
+                Snapshot.from_json(3, {**data, **change})
+        del data["subvolume"]
+        with self.assertRaises(PatrolError):
+            Snapshot.from_json(3, data)
+
 
 class PruneSelectionTests(unittest.TestCase):
     def test_kept_snapshots_are_never_pruned_and_do_not_count(self):
@@ -61,6 +82,17 @@ class PruneSelectionTests(unittest.TestCase):
 
     def test_nothing_to_prune(self):
         self.assertEqual(select_for_pruning([make_snapshot(1)], 1), [])
+
+    def test_each_subvolume_is_counted_on_its_own(self):
+        snapshots = [
+            make_snapshot(1),
+            make_snapshot(2, subvolume="home"),
+            make_snapshot(3),
+            make_snapshot(4, subvolume="home"),
+            make_snapshot(5, subvolume="home"),
+        ]
+        self.assertEqual([s.id for s in select_for_pruning(snapshots, 1)], [1])
+        self.assertEqual([s.id for s in select_for_pruning(snapshots, 1, "home")], [2, 4])
 
 
 class SnapshotStoreTests(unittest.TestCase):
@@ -172,6 +204,21 @@ class SnapshotStoreTests(unittest.TestCase):
             pruned = self.store.prune(max_snapshots=2)
         self.assertEqual([s.id for s in pruned], [2])
         self.assertEqual(self.store.ids(), [1, 3, 4])
+
+    def test_create_for_another_subvolume(self):
+        snapshot = self.create(subvolume="home")
+        self.assertEqual(self.store.load(snapshot.id).subvolume, "home")
+        data = json.loads((self.store.path(snapshot.id) / INFO_FILE).read_text())
+        self.assertEqual(data["subvolume"], "home")
+
+    def test_prune_leaves_other_subvolumes_alone(self):
+        self.create()
+        self.create(subvolume="home")
+        self.create()
+        with self.store.lock():
+            pruned = self.store.prune(max_snapshots=1)
+        self.assertEqual([s.id for s in pruned], [1])
+        self.assertEqual(self.store.ids(), [2, 3])
 
     def test_lock_requires_directory(self):
         with self.assertRaisesRegex(PatrolError, "not found"):

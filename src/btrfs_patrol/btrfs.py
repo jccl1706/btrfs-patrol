@@ -14,6 +14,8 @@ from btrfs_patrol import system
 from btrfs_patrol.errors import PatrolError
 
 BTRFS = "btrfs"
+# The top directory of every btrfs subvolume has this inode number.
+SUBVOLUME_ROOT_INODE = 256
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,11 @@ def create_subvolume(path: Path) -> None:
 
 def delete_subvolume(path: Path) -> None:
     run("subvolume", "delete", path)
+
+
+def is_subvolume(path: Path) -> bool:
+    """Whether path, on a btrfs filesystem, is the top directory of a subvolume."""
+    return path.stat().st_ino == SUBVOLUME_ROOT_INODE
 
 
 def subvolume_id(path: Path) -> int:

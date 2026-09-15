@@ -105,6 +105,21 @@ def find_mount(mount_point: Path, mounts: Sequence[Mount]) -> Mount | None:
     return matches[-1] if matches else None
 
 
+def containing_mount(path: Path, mounts: Sequence[Mount]) -> Mount | None:
+    """The mount path is on: the deepest mount point that is path or one of its parents.
+
+    Among mounts at the same point, the last one listed wins, as in find_mount.
+    """
+    best: Mount | None = None
+    for mount in mounts:
+        point = Path(mount.mount_point)
+        if path.is_relative_to(point) and (
+            best is None or len(point.parts) >= len(Path(best.mount_point).parts)
+        ):
+            best = mount
+    return best
+
+
 @contextlib.contextmanager
 def mounted_top_level(device: str) -> Iterator[Path]:
     """Mount the btrfs top-level subvolume (ID 5) of device on a private directory under /run."""

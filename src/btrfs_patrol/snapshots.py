@@ -5,9 +5,12 @@ Each snapshot lives in its own numbered directory under the snapshots
 directory (by default /.snapshots, where a top-level subvolume is mounted):
 
     <id>/info.json   metadata written by btrfs-patrol
-    <id>/snapshot    read-only btrfs snapshot of the root subvolume
+    <id>/snapshot    read-only btrfs snapshot of a managed subvolume
     .next-id         the ID the next snapshot gets, so IDs are never reused
     .lock            held while the store is being changed
+
+Snapshots of every managed subvolume share the store and its IDs; info.json
+says which subvolume a snapshot is of.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from btrfs_patrol import btrfs, system
+from btrfs_patrol.config import ROOT
 from btrfs_patrol.errors import PatrolError
 
 ROOT_MOUNT = Path("/")
@@ -30,6 +34,14 @@ SUBVOLUME_NAME = "snapshot"
 COUNTER_FILE = ".next-id"
 LOCK_FILE = ".lock"
 FORMAT_VERSION = 1
+"""Metadata of a root snapshot, which names no subvolume."""
+FORMAT_WITH_SUBVOLUME = 2
+"""Metadata of any other subvolume's snapshot, which names the subvolume.
+
+Versions before 0.3 refuse any format but 1, so they can never take a snapshot
+of /home for one of / and roll the root back to it. Root snapshots keep format
+1, so those versions can still read them.
+"""
 
 
 @dataclass
@@ -41,22 +53,33 @@ class Snapshot:
     """How the snapshot was taken: manual, timer, dnf-pre, dnf-post or rollback."""
     description: str = ""
     keep: bool = False
-    """Kept snapshots are never pruned and don't count toward retention.max_snapshots."""
+    """Kept snapshots are never pruned and don't count toward a subvolume's max_snapshots."""
+    subvolume: str = ROOT
+    """The name of the managed subvolume it is a snapshot of."""
 
     def to_json(self) -> dict[str, object]:
-        return {
-            "format": FORMAT_VERSION,
+        data: dict[str, object] = {
+            "format": FORMAT_VERSION if self.subvolume == ROOT else FORMAT_WITH_SUBVOLUME,
             "created": self.created.isoformat(timespec="seconds"),
             "kernel": self.kernel,
             "kind": self.kind,
             "description": self.description,
             "keep": self.keep,
         }
+        if self.subvolume != ROOT:
+            data["subvolume"] = self.subvolume
+        return data
 
     @classmethod
     def from_json(cls, snapshot_id: int, data: dict[str, object]) -> Snapshot:
         try:
-            if data["format"] != FORMAT_VERSION:
+            if data["format"] == FORMAT_VERSION:
+                subvolume = ROOT
+            elif data["format"] == FORMAT_WITH_SUBVOLUME:
+                subvolume = data["subvolume"]
+                if not isinstance(subvolume, str) or not subvolume:
+                    raise ValueError(f"subvolume {subvolume!r}")
+            else:
                 raise PatrolError(
                     f"snapshot {snapshot_id}: unsupported metadata format {data['format']!r}"
                 )
@@ -67,14 +90,19 @@ class Snapshot:
                 kind=str(data["kind"]),
                 description=str(data["description"]),
                 keep=data["keep"] is True,
+                subvolume=subvolume,
             )
         except (KeyError, TypeError, ValueError) as e:
             raise PatrolError(f"snapshot {snapshot_id}: invalid metadata ({e!r})") from None
 
 
-def select_for_pruning(snapshots: Sequence[Snapshot], max_snapshots: int) -> list[Snapshot]:
-    """The oldest snapshots that aren't kept, beyond the newest max_snapshots of them."""
-    candidates = sorted((s for s in snapshots if not s.keep), key=lambda s: s.id)
+def select_for_pruning(
+    snapshots: Sequence[Snapshot], max_snapshots: int, subvolume: str = ROOT
+) -> list[Snapshot]:
+    """The oldest snapshots of subvolume that aren't kept, beyond the newest max_snapshots of them."""
+    candidates = sorted(
+        (s for s in snapshots if s.subvolume == subvolume and not s.keep), key=lambda s: s.id
+    )
     return candidates[: max(len(candidates) - max_snapshots, 0)]
 
 
@@ -146,7 +174,9 @@ class SnapshotStore:
         system.write_atomic(counter, f"{snapshot_id + 1}\n")
         return snapshot_id
 
-    def new_entry(self, kind: str, description: str = "", keep: bool = False) -> Snapshot:
+    def new_entry(
+        self, kind: str, description: str = "", keep: bool = False, subvolume: str = ROOT
+    ) -> Snapshot:
         """Reserve an ID and write the metadata for a snapshot whose subvolume the caller
         then puts in place. Call this while holding lock()."""
         snapshot = Snapshot(
@@ -157,6 +187,7 @@ class SnapshotStore:
             kind=kind,
             description=description,
             keep=keep,
+            subvolume=subvolume,
         )
         self.path(snapshot.id).mkdir()
         try:
@@ -174,11 +205,17 @@ class SnapshotStore:
         directory.rmdir()
 
     def create(
-        self, source: Path, kind: str, description: str = "", keep: bool = False
+        self,
+        source: Path,
+        kind: str,
+        description: str = "",
+        keep: bool = False,
+        subvolume: str = ROOT,
     ) -> Snapshot:
-        """Take a read-only snapshot of source. Call this while holding lock()."""
+        """Take a read-only snapshot of source, the managed subvolume named subvolume.
+        Call this while holding lock()."""
         # Metadata first, so a snapshot subvolume never exists without it.
-        snapshot = self.new_entry(kind, description, keep)
+        snapshot = self.new_entry(kind, description, keep, subvolume)
         try:
             btrfs.create_snapshot(source, self.subvolume(snapshot.id), readonly=True)
         except Exception:
@@ -193,9 +230,10 @@ class SnapshotStore:
             btrfs.delete_subvolume(subvolume)
         self.remove_entry(snapshot_id)
 
-    def prune(self, max_snapshots: int) -> list[Snapshot]:
-        """Delete snapshots beyond max_snapshots and return them. Call this while holding lock()."""
-        pruned = select_for_pruning(self.load_all(), max_snapshots)
+    def prune(self, max_snapshots: int, subvolume: str = ROOT) -> list[Snapshot]:
+        """Delete subvolume's snapshots beyond max_snapshots and return them.
+        Call this while holding lock()."""
+        pruned = select_for_pruning(self.load_all(), max_snapshots, subvolume)
         for snapshot in pruned:
             self.delete(snapshot.id)
         return pruned

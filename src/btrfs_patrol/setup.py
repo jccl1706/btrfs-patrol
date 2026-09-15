@@ -42,8 +42,7 @@ from btrfs_patrol.snapshots import ROOT_MOUNT
 
 FSTAB = Path("/etc/fstab")
 FSTAB_BACKUP_SUFFIX = ".btrfs-patrol-backup"
-# The top directory of every btrfs subvolume has this inode number.
-SUBVOLUME_ROOT_INODE = 256
+SUBVOLUME_ROOT_INODE = btrfs.SUBVOLUME_ROOT_INODE
 TIMER = "btrfs-patrol-snapshot.timer"
 
 

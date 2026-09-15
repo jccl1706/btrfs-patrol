@@ -147,6 +147,25 @@ class DnfHookTests(unittest.TestCase):
             "btrfs-patrol: created snapshot 2 (dnf-pre): install b; pruned 1",
         )
 
+    def test_subvolumes_that_ask_for_dnf_snapshots_get_one(self):
+        self.write_config(
+            '[subvolumes.home]\npath = "/home"\n'
+            '[subvolumes.log]\npath = "/var/log"\ndnf = true\n'
+        )
+        requests, err = self.run_hook("pre", trans_reply(("tree", "I")), OK_LOG)
+        self.assertEqual(err, "")
+        self.assertEqual(
+            [(s.id, s.subvolume, s.description) for s in self.store.load_all()],
+            [(1, "root", "install tree"), (2, "log", "install tree")],
+        )
+        self.assertEqual(
+            requests[-1]["args"]["message"],
+            "btrfs-patrol: created snapshots 1 (root), 2 (log) (dnf-pre): install tree",
+        )
+        self.assertEqual(
+            [c.args[0] for c in self.create_snapshot.call_args_list], [Path("/"), Path("/var/log")]
+        )
+
     def test_pending_rollback_skips_the_snapshot(self):
         self.mounts = [Mount("/snapshots/8/snapshot", "/", "btrfs", "/dev/vda2")]
         requests, err = self.run_hook("pre", OK_LOG)

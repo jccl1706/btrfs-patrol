@@ -21,9 +21,23 @@ snapshots_subvolume = "snapshots"
 snapshots_dir = "/.snapshots"
 
 [retention]
-# How many snapshots to keep before the oldest are pruned. Snapshots marked
-# with 'btrfs-patrol keep' don't count toward this limit.
+# How many snapshots of root to keep before the oldest are pruned, and the
+# default for other subvolumes. Snapshots marked with 'btrfs-patrol keep' don't
+# count toward this limit.
 max_snapshots = 50
+
+# Other subvolumes to snapshot besides root: one [subvolumes.<name>] table each.
+# The name is what 'btrfs-patrol list' shows and 'subvolume=<name>' selects;
+# "root" is taken. Each must be a btrfs subvolume on the same filesystem as /,
+# either mounted on its own (by subvol= in /etc/fstab, as Fedora mounts /home)
+# or inside another subvolume. A subvolume is rolled back on its own: rolling
+# back root leaves /home alone, and the other way round.
+#
+# [subvolumes.home]
+# path = "/home"          # its mount point, or its path inside another subvolume
+# max_snapshots = 20      # snapshots of it to keep (default: retention.max_snapshots)
+# timer = true            # in the daily snapshot (default: true)
+# dnf = false             # in the snapshots dnf takes, too (default: false)
 
 [dnf]
 # Take a snapshot before each dnf5 transaction (needs libdnf5-plugin-actions).

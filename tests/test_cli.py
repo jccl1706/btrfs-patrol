@@ -9,8 +9,8 @@ from unittest import mock
 
 from support import make_snapshot
 
+from btrfs_patrol import btrfs, selinux, system
 from btrfs_patrol import config as config_mod
-from btrfs_patrol import selinux, system
 from btrfs_patrol.cli import App, build_parser, cmd_delete, cmd_snapshot, main
 from btrfs_patrol.errors import PatrolError
 from btrfs_patrol.output import Console
@@ -161,6 +161,133 @@ class CliTests(unittest.TestCase):
                 code, _, err = self.run_cli(*argv)
                 self.assertEqual(code, 1)
                 self.assertIn("must be run as root", err)
+
+
+class SubvolumeCliTests(unittest.TestCase):
+    """Commands with [subvolumes] tables: /home mounted on its own, and a log subvolume inside root."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        self.snapshots_dir = base / "snapshots"
+        self.snapshots_dir.mkdir()
+        self.log_dir = base / "log"
+        self.log_dir.mkdir()
+        self.config = base / "config.toml"
+        self.config.write_text(
+            f'[filesystem]\nsnapshots_dir = "{self.snapshots_dir}"\n'
+            '[subvolumes.home]\npath = "/home"\nmax_snapshots = 1\n'
+            f'[subvolumes.log]\npath = "{self.log_dir}"\ntimer = false\n'
+        )
+        self.store = SnapshotStore(self.snapshots_dir)
+        for name in ("enabled", "exclusion_missing"):
+            patcher = mock.patch.object(selinux, name, return_value=False)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = mock.patch.multiple(btrfs, create_snapshot=mock.DEFAULT, delete_subvolume=mock.DEFAULT)
+        mocks = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.create_snapshot = mocks["create_snapshot"]
+        self.create_snapshot.side_effect = lambda source, destination, readonly=False: destination.mkdir()
+        mocks["delete_subvolume"].side_effect = lambda path: path.rmdir()
+        self.mounts = [
+            Mount("/root", "/", "btrfs", "/dev/vda2"),
+            Mount("/home", "/home", "btrfs", "/dev/vda2"),
+            Mount("/snapshots", str(self.snapshots_dir), "btrfs", "/dev/vda2"),
+        ]
+        patcher = mock.patch.object(system, "read_mounts", side_effect=lambda: self.mounts)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(["--config", str(self.config), "--color", "never", *argv])
+        return code, out.getvalue(), err.getvalue()
+
+    def snapshot(self, *argv):
+        out = io.StringIO()
+        app = App(config_mod.load(self.config), self.store, Console("never", out=out))
+        code = cmd_snapshot(app, build_parser().parse_args(["snapshot", *argv]))
+        return code, out.getvalue()
+
+    def taken(self):
+        return [(s.id, s.subvolume) for s in self.store.load_all()]
+
+    def test_manual_snapshot_takes_every_subvolume(self):
+        code, out = self.snapshot("-d", "before the upgrade")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.taken(), [(1, "root"), (2, "home"), (3, "log")])
+        self.assertIn("created snapshot 2 of home", out)
+        self.assertEqual(
+            [c.args[0] for c in self.create_snapshot.call_args_list],
+            [Path("/"), Path("/home"), self.log_dir],
+        )
+
+    def test_snapshot_of_named_subvolumes(self):
+        self.snapshot("--subvolume", "home", "-s", "home")
+        self.assertEqual(self.taken(), [(1, "home")])
+        with self.assertRaisesRegex(PatrolError, "no subvolume named 'data'.*root, home, log"):
+            self.snapshot("-s", "data")
+
+    def test_timer_skips_subvolumes_without_the_timer(self):
+        self.snapshot("--kind", "timer")
+        self.assertEqual(self.taken(), [(1, "root"), (2, "home")])
+
+    def test_each_subvolume_is_pruned_by_its_own_limit(self):
+        self.snapshot("-s", "home")
+        self.snapshot("-s", "home")
+        self.snapshot("-s", "root")
+        self.assertEqual(self.taken(), [(2, "home"), (3, "root")])
+
+    def test_pending_rollback_of_home(self):
+        self.mounts[1] = Mount("/snapshots/9/snapshot", "/home", "btrfs", "/dev/vda2")
+        with self.assertRaisesRegex(PatrolError, "/home is still the previous state.*reboot first"):
+            self.snapshot()
+        self.assertEqual(self.store.ids(), [])
+        code, out = self.snapshot("--kind", "timer")
+        self.assertEqual(code, 0)
+        self.assertIn("skipping the scheduled snapshot of home", out)
+        self.assertEqual(self.taken(), [(1, "root")])
+
+    def test_list_shows_the_subvolume(self):
+        self.snapshot("-s", "home")
+        code, out, err = self.run_cli("list")
+        self.assertEqual(code, 0, err)
+        self.assertIn("SUBVOLUME", out)
+        self.assertIn(" home ", out)
+
+    def test_check_reports_a_directory_that_is_not_a_subvolume(self):
+        with mock.patch.object(btrfs, "is_subvolume", return_value=False):
+            code, _, err = self.run_cli("check")
+        self.assertEqual(code, 1)
+        self.assertIn(f"{self.log_dir} (subvolume 'log') is a directory, not a btrfs subvolume", err)
+
+    def test_check_warns_about_a_subvolume_inside_root(self):
+        with mock.patch.object(btrfs, "is_subvolume", return_value=True):
+            code, out, err = self.run_cli("check")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"{self.log_dir} is a subvolume inside the root subvolume", err)
+        self.assertNotIn("/home is a subvolume inside", err)
+        self.assertIn("look good", out)
+
+    def test_check_reports_home_on_another_filesystem(self):
+        self.mounts[1] = Mount("/", "/home", "xfs", "/dev/vdb1")
+        with mock.patch.object(btrfs, "is_subvolume", return_value=True):
+            code, _, err = self.run_cli("check")
+        self.assertEqual(code, 1)
+        self.assertIn("/home (subvolume 'home') is not on the btrfs filesystem mounted at /", err)
+
+    def test_check_warns_about_snapshots_of_unconfigured_subvolumes(self):
+        snapshot = make_snapshot(4, subvolume="data")
+        self.store.path(4).mkdir()
+        self.store.save(snapshot)
+        self.store.subvolume(4).mkdir()
+        with mock.patch.object(btrfs, "is_subvolume", return_value=True):
+            code, _, err = self.run_cli("check")
+        self.assertEqual(code, 0, err)
+        self.assertIn("snapshot(s) 4 are of the subvolume 'data'", err)
 
 
 if __name__ == "__main__":

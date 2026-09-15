@@ -42,6 +42,15 @@ class FormatTableTests(unittest.TestCase):
         self.assertNotIn("\033[", format_table(self.snapshots, Style(False), width=80))
         self.assertIn("\033[", format_table(self.snapshots, Style(True), width=80))
 
+    def test_subvolume_column_only_when_asked(self):
+        snapshots = [*self.snapshots, make_snapshot(13, subvolume="home")]
+        self.assertNotIn("SUBVOLUME", format_table(snapshots, Style(False), width=120))
+        lines = format_table(snapshots, Style(False), width=120, show_subvolume=True).splitlines()
+        self.assertIn("SUBVOLUME", lines[0])
+        self.assertEqual(lines[1].split()[3], "root")
+        self.assertEqual(lines[3].split()[3], "home")
+        self.assertTrue(all(len(line) <= 120 for line in lines), lines)
+
     def test_empty(self):
         self.assertEqual(len(format_table([], Style(False), width=80).splitlines()), 1)
 

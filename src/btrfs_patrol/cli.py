@@ -11,9 +11,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from btrfs_patrol import __version__, dnf, rollback, selinux, setup, system
+from btrfs_patrol import __version__, btrfs, dnf, rollback, selinux, setup, system
 from btrfs_patrol import config as config_mod
-from btrfs_patrol.config import Config
+from btrfs_patrol.config import ROOT, Config, ManagedSubvolume
 from btrfs_patrol.errors import PatrolError
 from btrfs_patrol.output import Console, format_table
 from btrfs_patrol.selectors import select
@@ -26,6 +26,7 @@ selectors:
   3, 1,10,20-23       snapshot IDs and ID ranges
   date=2026-09        text in a field: date, time, kernel, kind or description
   description=gnome   (matching ignores case)
+  subvolume=home      snapshots of one subvolume (its whole name)
   keep=yes            kept snapshots (keep=no for the others)
 """
 
@@ -52,12 +53,9 @@ class App:
             width = shutil.get_terminal_size().columns
         else:
             width = sys.maxsize
-        return format_table(snapshots, self.console.style, width, wrap)
-
-
-def rollback_pending(config: Config) -> int | None:
-    """The snapshot / still is, when a rollback is waiting for a reboot."""
-    return rollback.pending_rollback(config, system.find_mount(ROOT_MOUNT, system.read_mounts()))
+        # Only a system that snapshots more than root needs to be told which one.
+        show_subvolume = bool(self.config.subvolumes) or any(s.subvolume != ROOT for s in snapshots)
+        return format_table(snapshots, self.console.style, width, wrap, show_subvolume)
 
 
 def require_confirmation_possible(assume_yes: bool) -> None:
@@ -74,6 +72,34 @@ def confirm(console: Console, question: str, assume_yes: bool) -> bool:
     return sys.stdin.readline().strip().lower() in ("y", "yes")
 
 
+def selected_subvolumes(
+    config: Config, names: Sequence[str] | None, kind: str
+) -> list[ManagedSubvolume]:
+    """The subvolumes a snapshot command takes: the named ones, or every one it is for."""
+    if not names:
+        return [s for s in config.managed() if kind != "timer" or s.timer]
+    chosen: list[ManagedSubvolume] = []
+    for name in names:
+        subvolume = config.find(name)
+        if subvolume is None:
+            known = ", ".join(s.name for s in config.managed())
+            raise PatrolError(f"no subvolume named {name!r} in the configuration (there are: {known})")
+        if subvolume not in chosen:
+            chosen.append(subvolume)
+    return chosen
+
+
+def pending_rollbacks(config: Config, subvolumes: Sequence[ManagedSubvolume]) -> dict[str, int]:
+    """Name -> snapshot ID, for the subvolumes whose rollback is waiting for a reboot."""
+    mounts = system.read_mounts()
+    pending = {}
+    for subvolume in subvolumes:
+        snapshot_id = rollback.pending_rollback(config, system.find_mount(subvolume.path, mounts))
+        if snapshot_id is not None:
+            pending[subvolume.name] = snapshot_id
+    return pending
+
+
 def cmd_list(app: App, args: argparse.Namespace) -> int:
     snapshots = app.store.load_all()
     if args.selector:
@@ -85,22 +111,35 @@ def cmd_list(app: App, args: argparse.Namespace) -> int:
 
 
 def cmd_snapshot(app: App, args: argparse.Namespace) -> int:
-    pending = rollback_pending(app.config)
-    if pending is not None:
-        message = rollback.pending_rollback_message(pending)
-        if args.kind == "timer":
-            # A snapshot of the system being left would only be clutter, and a failed
-            # unit until the reboot would be noise: the next scheduled run takes it.
-            app.console.info(f"{message}; skipping the scheduled snapshot")
-            return 0
-        raise PatrolError(f"{message}; reboot first")
+    config = app.config
+    subvolumes = selected_subvolumes(config, args.subvolume, args.kind)
+    named = bool(config.subvolumes)
+    pending = pending_rollbacks(config, subvolumes)
+    for subvolume in subvolumes:
+        if subvolume.name not in pending:
+            continue
+        message = rollback.pending_rollback_message(pending[subvolume.name], subvolume.path)
+        if args.kind != "timer":
+            raise PatrolError(f"{message}; reboot first")
+        # A snapshot of the state being left would only be clutter, and a failed
+        # unit until the reboot would be noise: the next scheduled run takes it.
+        of = f" of {subvolume.name}" if named else ""
+        app.console.info(f"{message}; skipping the scheduled snapshot{of}")
+    subvolumes = [s for s in subvolumes if s.name not in pending]
+    if not subvolumes:
+        return 0
     with app.store.lock():
-        snapshot = app.store.create(
-            ROOT_MOUNT, kind=args.kind, description=args.description, keep=args.keep
-        )
-        app.console.info(f"created snapshot {snapshot.id}")
-        for pruned in app.store.prune(app.config.max_snapshots):
-            app.console.info(f"pruned snapshot {pruned.id}")
+        for subvolume in subvolumes:
+            snapshot = app.store.create(
+                subvolume.path,
+                kind=args.kind,
+                description=args.description,
+                keep=args.keep,
+                subvolume=subvolume.name,
+            )
+            app.console.info(f"created snapshot {snapshot.id}" + (f" of {subvolume.name}" if named else ""))
+            for pruned in app.store.prune(subvolume.max_snapshots, subvolume.name):
+                app.console.info(f"pruned snapshot {pruned.id}")
     return 0
 
 
@@ -143,7 +182,11 @@ def cmd_delete(app: App, args: argparse.Namespace) -> int:
 
 def cmd_prune(app: App, args: argparse.Namespace) -> int:
     with app.store.lock():
-        pruned = app.store.prune(app.config.max_snapshots)
+        pruned = [
+            snapshot
+            for subvolume in app.config.managed()
+            for snapshot in app.store.prune(subvolume.max_snapshots, subvolume.name)
+        ]
     for snapshot in pruned:
         app.console.info(f"pruned snapshot {snapshot.id}")
     if not pruned:
@@ -167,6 +210,18 @@ def cmd_rollback(app: App, args: argparse.Namespace) -> int:
             app.console.info("nothing changed")
             return 1
         saved = plan.execute()
+    if plan.name != ROOT:
+        app.console.info(
+            f"rolled back {plan.path} to snapshot {target.id}; "
+            f"the previous state is kept as snapshot {saved.id}"
+        )
+        if plan.mounted:
+            app.console.info(f"reboot to use the restored {plan.path}")
+        else:
+            app.console.info(
+                f"the restored {plan.path} is in place; restart the programs that use it, or reboot"
+            )
+        return 0
     app.console.info(
         f"rolled back to snapshot {target.id}; the previous state is kept as snapshot {saved.id}"
     )
@@ -178,6 +233,39 @@ def cmd_rollback(app: App, args: argparse.Namespace) -> int:
         journal /= "<machine-id>"
     app.console.info(f"logs from before the rollback stay in snapshot {saved.id}: journalctl -D {journal}")
     return 0
+
+
+def check_subvolume(
+    config: Config, subvolume: ManagedSubvolume, root: system.Mount, mounts: Sequence[system.Mount]
+) -> tuple[list[str], list[str]]:
+    """Problems and warnings about a [subvolumes.<name>] table, given the btrfs mount at /."""
+    path = subvolume.path
+    label = f"{path} (subvolume {subvolume.name!r})"
+    own = system.find_mount(path, mounts)
+    if own is not None:
+        if own.fstype != "btrfs" or own.source != root.source:
+            return [f"{label} is not on the btrfs filesystem mounted at /"], []
+        pending = rollback.pending_rollback(config, own)
+        if pending is not None:
+            message = rollback.pending_rollback_message(pending, path)
+            return [], [f"{message}; reboot to use the restored {path}"]
+        location = own.root.strip("/")
+    else:
+        if not path.is_dir():
+            return [f"{label} doesn't exist"], []
+        outer = system.containing_mount(path, mounts)
+        if outer is None or outer.fstype != "btrfs" or outer.source != root.source:
+            return [f"{label} is not on the btrfs filesystem mounted at /"], []
+        if not btrfs.is_subvolume(path):
+            return [f"{label} is a directory, not a btrfs subvolume"], []
+        inside = path.relative_to(outer.mount_point).as_posix()
+        location = f"{outer.root.strip('/')}/{inside}".strip("/")
+    if location.startswith(f"{config.root_subvolume.strip('/')}/"):
+        return [], [
+            f"{path} is a subvolume inside the root subvolume, so snapshots and rollbacks "
+            "of root don't include it"
+        ]
+    return [], []
 
 
 def cmd_check(app: App, args: argparse.Namespace) -> int:
@@ -213,14 +301,23 @@ def cmd_check(app: App, args: argparse.Namespace) -> int:
     elif root is not None and snapshots_mount.source != root.source:
         problems.append(f"{config.snapshots_dir} is not on the same filesystem as /")
     else:
+        managed = {subvolume.name for subvolume in config.managed()}
+        unmanaged: dict[str, list[int]] = {}
         for snapshot_id in app.store.ids():
             try:
-                app.store.load(snapshot_id)
+                snapshot = app.store.load(snapshot_id)
             except PatrolError as e:
                 problems.append(str(e))
                 continue
             if not app.store.subvolume(snapshot_id).is_dir():
                 problems.append(f"snapshot {snapshot_id} has metadata but no subvolume")
+            if snapshot.subvolume not in managed:
+                unmanaged.setdefault(snapshot.subvolume, []).append(snapshot_id)
+        for name, ids in sorted(unmanaged.items()):
+            app.console.warn(
+                f"snapshot(s) {', '.join(str(i) for i in ids)} are of the subvolume {name!r}, "
+                "which isn't in the configuration: they are never pruned and can't be rolled back"
+            )
         if selinux.enabled():
             try:
                 if selinux.mislabeled(selinux.store_paths(config.snapshots_dir)):
@@ -230,6 +327,13 @@ def cmd_check(app: App, args: argparse.Namespace) -> int:
                     )
             except PatrolError as e:
                 app.console.warn(f"could not check SELinux labels: {e}")
+
+    if root is not None and root.fstype == "btrfs":
+        for subvolume in config.subvolumes:
+            found, warnings = check_subvolume(config, subvolume, root, mounts)
+            problems.extend(found)
+            for warning in warnings:
+                app.console.warn(warning)
 
     if selinux.exclusion_missing(config.snapshots_dir):
         app.console.warn(
@@ -307,10 +411,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="wrap long descriptions instead of truncating them",
     )
 
-    command = add("snapshot", cmd_snapshot, "take a snapshot of the root subvolume", True)
+    command = add("snapshot", cmd_snapshot, "take snapshots of the managed subvolumes", True)
     command.add_argument("-d", "--description", default="")
     command.add_argument(
-        "-k", "--keep", action="store_true", help="never prune this snapshot automatically"
+        "-k", "--keep", action="store_true", help="never prune these snapshots automatically"
+    )
+    command.add_argument(
+        "-s", "--subvolume", action="append", metavar="NAME",
+        help="only this subvolume, root or a [subvolumes.NAME] table; repeat for more "
+             "(default: all of them)",
     )
     command.add_argument("--kind", choices=("manual", "timer"), default="manual",
                          help=argparse.SUPPRESS)
@@ -328,10 +437,10 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("selector")
     command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
 
-    add("prune", cmd_prune, "delete the oldest snapshots beyond retention.max_snapshots", True)
+    add("prune", cmd_prune, "delete each subvolume's oldest snapshots beyond its max_snapshots", True)
 
     command = add("rollback", cmd_rollback,
-                  "roll the root subvolume back to a snapshot, then reboot to use it", True)
+                  "roll a subvolume back to one of its snapshots, then reboot to use it", True)
     command.add_argument("id", type=int)
     command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
     command.add_argument("-n", "--dry-run", action="store_true",

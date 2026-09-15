@@ -9,6 +9,7 @@ or a single field match:
     kernel=6.17         kernel version contains the text
     kind=dnf-pre        kind contains the text
     description=gnome   description contains the text
+    subvolume=home      snapshots of that subvolume (the whole name, not part of it)
     keep=yes            kept snapshots (keep=no for the others)
 
 Text matches ignore case. Field matches can't be combined with commas, so the
@@ -66,10 +67,15 @@ def _select_by_field(selector: str, snapshots: Sequence[Snapshot]) -> list[Snaps
         if value not in ("yes", "no"):
             raise PatrolError("keep= must be followed by 'yes' or 'no'")
         matches = (s for s in snapshots if s.keep == (value == "yes"))
+    elif field == "subvolume":
+        # The whole name: "subvolume=o" matching both root and home would only surprise.
+        if not value:
+            raise PatrolError("subvolume= must be followed by a subvolume's name")
+        matches = (s for s in snapshots if s.subvolume.casefold() == value.casefold())
     else:
         getter = _FIELDS.get(field)
         if getter is None:
-            choices = ", ".join([*_FIELDS, "keep"])
+            choices = ", ".join([*_FIELDS, "subvolume", "keep"])
             raise PatrolError(f"unknown selector field {field!r} (expected one of: {choices})")
         if not value:
             raise PatrolError(f"{field}= must be followed by some text")

@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: GPL-3.0-or-later
 .\" Manual page for btrfs-patrol. Preview with: man -l man/btrfs-patrol.8
-.TH BTRFS-PATROL 8 "2026-09-15" "btrfs-patrol 0.2.2" "System Administration"
+.TH BTRFS-PATROL 8 "2026-09-15" "btrfs-patrol 0.3.0" "System Administration"
 .\" Left-aligned and unhyphenated, so commands, paths and package names stay whole.
 .\" The man macros reapply these at every paragraph, from groff's AD string and HY register.
 .ds AD l
@@ -35,6 +35,11 @@ takes a snapshot before each
 .BR dnf5 (8)
 transaction and once a day, and rolls the system back to an earlier snapshot
 with one command.
+.PP
+It can manage other subvolumes too, such as
+.IR /home :
+they get snapshots of their own, and each is rolled back on its own; see
+.BR "OTHER SUBVOLUMES" .
 .PP
 A rollback replaces the root subvolume with a writable copy of the chosen
 snapshot. The system you leave is not lost: it is kept as a new snapshot of
@@ -161,7 +166,8 @@ List snapshots, or only those matching
 .I SELECTOR
 (see
 .BR SELECTORS ),
-as a table of ID, date, time, kernel, kind and description. A
+as a table of ID, date, time, kernel, kind and description, with a SUBVOLUME
+column when other subvolumes are configured. A
 .B *
 before an ID marks a kept snapshot. On a terminal, long descriptions are cut
 to fit its width; written to a pipe or a file, they are printed whole.
@@ -172,19 +178,28 @@ Wrap long descriptions onto further lines instead of cutting them.
 .RE
 .
 .TP
-.B snapshot \fR[\fB\-d\fR|\fB\-\-description\fR \fITEXT\fR] [\fB\-k\fR|\fB\-\-keep\fR]
-Take a read-only snapshot of the root subvolume, of kind
+.B snapshot \fR[\fB\-d\fR|\fB\-\-description\fR \fITEXT\fR] [\fB\-k\fR|\fB\-\-keep\fR] [\fB\-s\fR|\fB\-\-subvolume\fR \fINAME\fR]...
+Take read-only snapshots, of kind
 .BR manual ,
-then prune (see
+of the root subvolume and of every subvolume in the configuration, one
+snapshot and ID each, then prune each subvolume (see
 .BR prune ).
-Refused while a rollback is waiting for its reboot.
+Refused when one of them has a rollback waiting for its reboot.
 .RS
 .TP
 .BR \-d ", " \-\-description " \fITEXT\fR"
-A description to remember the snapshot by.
+A description to remember the snapshots by.
 .TP
 .BR \-k ", " \-\-keep
-Keep the snapshot: never prune it.
+Keep the snapshots: never prune them.
+.TP
+.BR \-s ", " \-\-subvolume " \fINAME\fR"
+Only snapshot the subvolume
+.IR NAME :
+.B root
+or the name of a
+.BI [subvolumes. NAME ]
+table. Repeat it for more than one.
 .RE
 .
 .TP
@@ -195,8 +210,8 @@ Replace the description of snapshot
 .TP
 .B keep \fISELECTOR\fR
 Keep the matching snapshots: pruning never deletes them, and they do not count
-toward
-.BR retention.max_snapshots .
+toward their subvolume's
+.BR max_snapshots .
 .
 .TP
 .B unkeep \fISELECTOR\fR
@@ -214,17 +229,26 @@ Do not ask for confirmation.
 .
 .TP
 .B prune
-Delete the oldest snapshots that are not kept, until at most
+Delete each subvolume's oldest snapshots that are not kept, until at most its
+.B max_snapshots
+of them remain:
 .B retention.max_snapshots
-of them remain. Taking a manual, timer or dnf snapshot prunes too.
+for root, and the value in each
+.BI [subvolumes. NAME ]
+table for the others. Snapshots of a subvolume that is no longer in the
+configuration are never pruned. Taking a manual, timer or dnf snapshot prunes
+that subvolume too.
 .
 .TP
 .B rollback \fIID\fR [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-y\fR|\fB\-\-yes\fR]
-Roll the root subvolume back to snapshot
-.IR ID ,
+Roll the subvolume snapshot
+.I ID
+is of back to it \- the root subvolume, or another one in the configuration \-
 then reboot to use it. It shows the snapshot and the plan, prints any
 warnings, and asks for confirmation. See
-.BR ROLLBACK .
+.B ROLLBACK
+and
+.BR "OTHER SUBVOLUMES" .
 .RS
 .TP
 .BR \-n ", " \-\-dry\-run
@@ -310,6 +334,15 @@ and
 The description contains
 .IR TEXT .
 .TP
+.BI subvolume= NAME
+Snapshots of the subvolume
+.IR NAME ,
+such as
+.B subvolume=home
+or
+.BR subvolume=root .
+Unlike the other fields, the whole name has to match.
+.TP
 .BR keep=yes ", " keep=no
 Kept snapshots, or the others.
 .PP
@@ -319,6 +352,8 @@ characters, such as
 .BR "description=\(dqbefore the upgrade\(dq" .
 .
 .SH ROLLBACK
+This section is about rolling back the root subvolume; for the others, see
+.BR "OTHER SUBVOLUMES" .
 Before changing anything,
 .B rollback
 checks that:
@@ -409,6 +444,66 @@ When you are happy with the restored system, delete the
 .B rollback
 snapshot to free its space, or roll back to it to undo the rollback.
 .
+.SH OTHER SUBVOLUMES
+Besides the root subvolume,
+.B btrfs-patrol
+takes snapshots of the other btrfs subvolumes named by
+.BI [subvolumes. NAME ]
+tables in the configuration \- such as
+.I /home
+on a Fedora install, or
+.I /var/log
+once it is a subvolume of its own. They have to be on the same btrfs
+filesystem as the root. Their snapshots share root's snapshot IDs, list and
+selectors, are shown with their subvolume's name in
+.BR list ,
+and are pruned against each subvolume's own
+.BR max_snapshots .
+.PP
+Each subvolume is rolled back on its own:
+.B rollback
+restores the subvolume the chosen snapshot is of, and leaves every other one
+as it is. Rolling back root does not touch
+.IR /home ,
+and rolling back
+.I /home
+does not touch the system. The steps are the ones root's rollback takes \- the
+current state is kept as a
+.B rollback
+snapshot, nested subvolumes move into the restored one, and a failed step is
+undone \- without root's kernel and boot entry checks, which only root needs.
+The subvolume has to be found by its name at boot:
+.IP \(bu 2
+a subvolume mounted on its own, as Fedora mounts
+.IR /home ,
+must be mounted from
+.I /etc/fstab
+with
+.BR subvol= ,
+not
+.BR subvolid= .
+It stays mounted as it was until the reboot, like root.
+.IP \(bu 2
+a subvolume reached through its path inside another one, such as
+.I /var/log
+inside root, is replaced at once: files opened from then on are the restored
+ones, while programs that hold files open there keep the previous ones until
+they restart. Restart them, or reboot.
+.PP
+A subvolume inside the root subvolume is not part of root's snapshots, so a
+rollback of root does not roll it back, and
+.B check
+warns about it. That is the point for
+.IR /var/log ,
+but a subvolume at
+.I /var/lib
+would keep its data \- Flatpak applications, containers, the state of
+services \- through a rollback of root.
+.PP
+The path in a table has to be a subvolume already:
+.B btrfs-patrol
+does not turn a directory into one.
+.
 .SH DNF TRANSACTIONS
 With
 .B libdnf5\-plugin\-actions
@@ -430,9 +525,12 @@ snapshot is taken; set
 .B dnf.post_snapshot
 to also take one after, or
 .B dnf.pre_snapshot
-to false for none. Like every snapshot, a dnf snapshot prunes the oldest
-snapshots beyond
-.BR retention.max_snapshots .
+to false for none. Other subvolumes are in dnf's snapshots only when their
+table says
+.BR "dnf = true" .
+Like every snapshot, a dnf snapshot prunes its subvolume's oldest snapshots
+beyond its
+.BR max_snapshots .
 The hook does nothing until
 .B setup
 has written the configuration, skips its snapshot while a rollback is waiting
@@ -445,8 +543,10 @@ and repeated on standard error.
 starts
 .I btrfs\-patrol\-snapshot.service
 once a day, shortly after midnight (up to 15 minutes later, at random), which
-takes a snapshot of kind
+takes snapshots of kind
 .B timer
+of root and of every other subvolume whose table doesn't say
+.BR "timer = false" ,
 described as
 .RB \(lq "Scheduled snapshot" \(rq.
 A day missed because the machine was off is made up at the next boot. While a
@@ -562,6 +662,39 @@ or
 as for
 .BR \-\-color .
 .RE
+.TP
+.BI [subvolumes. NAME ]
+One table for each other subvolume to take snapshots of; see
+.BR "OTHER SUBVOLUMES" .
+.I NAME
+is what
+.B list
+shows and
+.BI subvolume= NAME
+selects: letters, digits,
+.BR _ ,
+.B .
+and
+.BR \- ,
+but not
+.BR root .
+.RS
+.TP
+.BR path " = " \(dq/home\(dq
+Required. Where the subvolume is: its mount point, or its path inside another
+subvolume. Neither
+.I /
+nor a path inside the snapshots directory.
+.TP
+.BR max_snapshots " = " \fIretention.max_snapshots\fR
+How many of its snapshots that are not kept to leave when pruning; at least 1.
+.TP
+.BR timer " = " true
+Whether the daily timer takes a snapshot of it.
+.TP
+.BR dnf " = " false
+Whether dnf transactions take a snapshot of it too.
+.RE
 .
 .SH FILES
 .TP
@@ -576,8 +709,11 @@ a read-only btrfs snapshot, or for kind
 the writable previous root subvolume.
 .TP
 .I /.snapshots/ID/info.json
-Its metadata: format version, creation time, kernel, kind, description and
-whether it is kept.
+Its metadata: format version, creation time, kernel, kind, description,
+whether it is kept and, for a subvolume other than root, the subvolume's name.
+Snapshots of other subvolumes use format 2, which versions before 0.3 refuse
+to read, so they can never roll root back to a snapshot of
+.IR /home .
 .TP
 .I /.snapshots/.next\-id
 The ID the next snapshot gets. It only moves forward, so IDs are never
@@ -693,6 +829,42 @@ first. To be rid of old snapshots without touching kept ones, lower
 and run
 .BR prune .
 .PP
+Take snapshots of
+.I /home
+too, keeping 20 of them: add a table to
+.IR /etc/btrfs\-patrol/config.toml ,
+then check it and take the first one:
+.PP
+.RS
+.EX
+[subvolumes.home]
+path = "/home"
+max_snapshots = 20
+.EE
+.RE
+.PP
+.RS
+.EX
+sudo btrfs\-patrol check
+sudo btrfs\-patrol snapshot \-\-subvolume home
+sudo btrfs\-patrol list subvolume=home
+.EE
+.RE
+.PP
+Get back one file deleted by mistake from snapshot 42 of
+.IR /home ,
+or roll all of
+.I /home
+back to it, keeping its current state as a new snapshot:
+.PP
+.RS
+.EX
+sudo cp \-a /.snapshots/42/snapshot/jc/Documents/report.odt ~/Documents/
+sudo btrfs\-patrol rollback 42
+sudo reboot
+.EE
+.RE
+.PP
 Undo an update that broke something. Snapshot 30 is the
 .B dnf\-pre
 snapshot taken before it; the rollback says which new snapshot keeps the
@@ -751,7 +923,10 @@ snapshots. Keep copies on another disk as well, for example with
 .BR "btrfs send" .
 .PP
 .I /home
-is a separate subvolume and is neither snapshotted nor rolled back.
+is a separate subvolume: it is neither snapshotted nor rolled back unless the
+configuration has a
+.B [subvolumes.home]
+table, and then only on its own.
 .PP
 There are no boot menu entries for snapshots yet, so a system too broken to
 log in to is recovered from a live system, as in
