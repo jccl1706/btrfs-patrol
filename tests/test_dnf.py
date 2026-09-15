@@ -44,6 +44,12 @@ class DescribeTransactionTests(unittest.TestCase):
         packages.append({"name": "pkg0", "action": "U"})  # another arch of the same package
         self.assertEqual(dnf.describe_transaction(packages), "upgrade pkg0, pkg1, pkg2 +2 more")
 
+    def test_names_are_sorted_ignoring_case(self):
+        packages = [{"name": n, "action": "I"} for n in ("R-srpm-macros", "add-determinism", "Bash")]
+        self.assertEqual(
+            dnf.describe_transaction(packages), "install add-determinism, Bash, R-srpm-macros"
+        )
+
     def test_nothing_describable(self):
         self.assertEqual(dnf.describe_transaction([{"name": "bash", "action": "?"}, {"x": 1}]), "")
 
@@ -146,6 +152,7 @@ class DnfHookTests(unittest.TestCase):
         requests, err = self.run_hook("pre", OK_LOG)
         self.assertEqual([r["op"] for r in requests], ["log"])
         self.assertIn("waiting for a reboot", requests[0]["args"]["message"])
+        self.assertIn("lost at the reboot", requests[0]["args"]["message"])
         self.assertIn("snapshot 8", err)
         self.assertEqual(self.snapshot_ids(), [])
 

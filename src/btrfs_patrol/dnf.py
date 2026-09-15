@@ -54,7 +54,8 @@ def describe_transaction(packages: Sequence[Mapping[str, object]]) -> str:
             names.setdefault(action, set()).add(name)
     parts = []
     for action, verb in ACTIONS.items():
-        found = sorted(names.get(action, ()))
+        # Ignoring case: sorted by code point, "R-srpm-macros" came before "add-determinism".
+        found = sorted(names.get(action, ()), key=str.casefold)
         if not found:
             continue
         part = f"{verb} {', '.join(found[:NAMES_PER_ACTION])}"
@@ -138,7 +139,12 @@ def run_hook(
             return 0
         pending = rollback.pending_rollback(config, system.find_mount(ROOT_MOUNT, system.read_mounts()))
         if pending is not None:
-            warn(f"{rollback.pending_rollback_message(pending)}; no snapshot until the reboot")
+            # This transaction changes the system being left, so what it installs is gone
+            # after the reboot - worth saying while the user can still stop and reboot first.
+            warn(
+                f"{rollback.pending_rollback_message(pending)}; no snapshot until the reboot, "
+                "and this transaction's changes are lost at the reboot"
+            )
             return 0
         description = describe_transaction(plugin.transaction_packages()) or FALLBACK_DESCRIPTION
         store = SnapshotStore(config.snapshots_dir)
