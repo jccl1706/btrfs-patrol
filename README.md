@@ -6,7 +6,10 @@ A btrfs snapshot manager and rollback tool for Fedora.
 > 44 VM and on a ThinkPad T480 (LUKS, LVM and btrfs), from source and from the
 > RPM: setup, snapshots from dnf and the timer, rollback to an older state and
 > forward again, and hibernating with a rollback waiting for its reboot - and
-> again, from the RPM, on a VM with SELinux enforcing, with no denials. It is
+> again, from the RPM, on a VM with SELinux enforcing, with no denials. 0.2.0
+> was tested again on the T480 (systemd-boot entries, SELinux enforcing),
+> upgraded from 0.1.1, and its unified kernel image support on a VM booting
+> one. It is
 > young software on the part of your system you most need to work, so keep
 > backups.
 
