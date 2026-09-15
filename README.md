@@ -11,7 +11,9 @@ A btrfs snapshot manager and rollback tool for Fedora.
 > upgraded from 0.1.1, and its unified kernel image support on a VM booting
 > one. A fresh Fedora 44 Workstation install with its default layout and GRUB
 > was tested from COPR: setup, dnf and timer snapshots, and a rollback and
-> roll forward with reboots. It is
+> roll forward with reboots. Snapshots of other subvolumes (0.3.0) were tested
+> on that VM and on the T480: a rollback of `/home` and a rollback of root,
+> each with a reboot, each leaving the other subvolume untouched. It is
 > young software on the part of your system you most need to work, so keep
 > backups.
 
