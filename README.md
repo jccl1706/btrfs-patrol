@@ -2,7 +2,7 @@
 
 A btrfs snapshot manager and rollback tool for Fedora.
 
-> **Status: 0.2.0.** Every command has been tested on a Fedora
+> **Status: 0.2.1.** Every command has been tested on a Fedora
 > 44 VM and on a ThinkPad T480 (LUKS, LVM and btrfs), from source and from the
 > RPM: setup, snapshots from dnf and the timer, rollback to an older state and
 > forward again, and hibernating with a rollback waiting for its reboot - and

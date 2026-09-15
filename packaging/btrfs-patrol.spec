@@ -1,5 +1,5 @@
 Name:           btrfs-patrol
-Version:        0.2.0
+Version:        0.2.1
 Release:        %autorelease
 Summary:        Btrfs snapshot manager and rollback tool for Fedora
 
