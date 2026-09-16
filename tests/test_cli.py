@@ -377,3 +377,42 @@ class PruneKernelsTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(f"removed the boot entry for {gone}", out)
         self.assertNotIn(f"removed the boot entry for {stuck}", out)
+
+
+class UnmountedSnapshotStoreTests(unittest.TestCase):
+    """cmd_snapshot must refuse rather than write into the parent subvolume."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        self.snapshots_dir = base / "snapshots"
+        self.snapshots_dir.mkdir()
+        self.config_path = base / "config.toml"
+        self.config_path.write_text(f'[filesystem]\nsnapshots_dir = "{self.snapshots_dir}"\n')
+        self.out, self.err = io.StringIO(), io.StringIO()
+        self.app = App(config_mod.load(self.config_path), SnapshotStore(self.snapshots_dir),
+                       Console("never", out=self.out, err=self.err))
+
+    def run_snapshot(self, mounts):
+        args = build_parser().parse_args(["snapshot", "-d", "x"])
+        with mock.patch.object(system, "read_mounts", return_value=mounts):
+            with mock.patch.object(btrfs, "create_snapshot") as create:
+                with self.assertRaises(PatrolError) as caught:
+                    cmd_snapshot(self.app, args)
+        return str(caught.exception), create
+
+    def test_refuses_when_the_store_is_not_mounted(self):
+        message, create = self.run_snapshot([Mount("/root", "/", "btrfs", "/dev/vda2")])
+        self.assertIn("is not a mount point", message)
+        create.assert_not_called()
+        self.assertEqual(list(self.snapshots_dir.iterdir()), [], "nothing written to the directory")
+
+    def test_refuses_when_a_different_subvolume_is_mounted_there(self):
+        mounts = [
+            Mount("/root", "/", "btrfs", "/dev/vda2"),
+            Mount("/wrong", str(self.snapshots_dir), "btrfs", "/dev/vda2"),
+        ]
+        message, create = self.run_snapshot(mounts)
+        self.assertIn("is subvolume '/wrong'", message)
+        create.assert_not_called()

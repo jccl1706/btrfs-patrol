@@ -129,6 +129,9 @@ def cmd_snapshot(app: App, args: argparse.Namespace) -> int:
     subvolumes = [s for s in subvolumes if s.name not in pending]
     if not subvolumes:
         return 0
+    # Before writing anything: an unmounted store would take the snapshot into
+    # the parent subvolume, where nothing will ever see it again.
+    system.require_mounted(config.snapshots_dir, config.snapshots_subvolume)
     with app.store.lock():
         for subvolume in subvolumes:
             snapshot = app.store.create(

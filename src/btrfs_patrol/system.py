@@ -105,6 +105,30 @@ def find_mount(mount_point: Path, mounts: Sequence[Mount]) -> Mount | None:
     return matches[-1] if matches else None
 
 
+def require_mounted(directory: Path, subvolume: str, mounts: Sequence[Mount] | None = None) -> Mount:
+    """The mount at directory, or raise if the expected subvolume is not mounted there.
+
+    Writing to a snapshot store that is not mounted is a silent trap: the files
+    land in the parent subvolume instead, where they are invisible as soon as
+    the real store is mounted again, are never listed or pruned, and are
+    numbered from an ID counter of their own, so they collide with real
+    snapshots. A scheduled snapshot would report success every day while
+    protecting nothing.
+    """
+    mount = find_mount(directory, read_mounts() if mounts is None else mounts)
+    if mount is None:
+        raise PatrolError(
+            f"{directory} is not a mount point; run 'btrfs-patrol setup' to create "
+            f"and mount the top-level {subvolume!r} subvolume there"
+        )
+    if mount.root != f"/{subvolume}":
+        raise PatrolError(
+            f"{directory} is subvolume {mount.root!r}, "
+            f"but filesystem.snapshots_subvolume is {subvolume!r}"
+        )
+    return mount
+
+
 def containing_mount(path: Path, mounts: Sequence[Mount]) -> Mount | None:
     """The mount path is on: the deepest mount point that is path or one of its parents.
 

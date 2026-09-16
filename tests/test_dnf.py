@@ -71,7 +71,10 @@ class DnfHookTests(unittest.TestCase):
         self.create_snapshot = mocks["create_snapshot"]
         self.create_snapshot.side_effect = fake_create_snapshot
         mocks["delete_subvolume"].side_effect = lambda path: path.rmdir()
-        self.mounts = [Mount("/root", "/", "btrfs", "/dev/vda2")]
+        self.mounts = [
+            Mount("/root", "/", "btrfs", "/dev/vda2"),
+            Mount("/snapshots", str(self.snapshots_dir), "btrfs", "/dev/vda2"),
+        ]
         patcher = mock.patch.object(system, "read_mounts", side_effect=lambda: self.mounts)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -86,6 +89,17 @@ class DnfHookTests(unittest.TestCase):
         self.assertEqual(code, 0)
         requests = [json.loads(line) for line in stdout.getvalue().splitlines()]
         return requests, err.getvalue()
+
+    def test_an_unmounted_store_warns_and_writes_nothing(self):
+        """The store not being mounted must never look like a successful snapshot."""
+        # Only / is mounted: /.snapshots is a plain directory on the root subvolume,
+        # so a snapshot taken here would vanish under the real store's mount.
+        self.mounts = [Mount("/root", "/", "btrfs", "/dev/vda2")]
+        self.write_config()
+        # run_hook asserts the exit code is 0: dnf's transaction must not be failed.
+        _, err = self.run_hook("pre")
+        self.assertIn("is not a mount point", err)
+        self.assertEqual(self.create_snapshot.call_count, 0, "nothing may be written")
 
     def snapshot_ids(self):
         return self.store.ids()
@@ -178,3 +192,4 @@ class DnfHookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

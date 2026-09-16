@@ -163,6 +163,10 @@ def run_hook(
             )
         ]
         description = describe_transaction(plugin.transaction_packages()) or FALLBACK_DESCRIPTION
+        # The store has to be the mounted subvolume, or the snapshot lands in the
+        # parent subvolume and is lost from view. Raised here, this is caught
+        # below and warned about: dnf's own transaction is not the casualty.
+        system.require_mounted(config.snapshots_dir, config.snapshots_subvolume, mounts)
         store = SnapshotStore(config.snapshots_dir)
         with store.lock():
             for subvolume in subvolumes:
