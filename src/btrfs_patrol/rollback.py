@@ -208,7 +208,8 @@ def _prepare_root(
     if lacking:
         warnings.append(
             f"snapshot {target.id} has no modules for {', '.join(lacking)}; "
-            f"choose {kernel} in the boot menu when you reboot"
+            f"choose {kernel} in the boot menu when you reboot, then remove the "
+            "other entries with 'btrfs-patrol prune-kernels'"
         )
     fstab = snapshot_root / "etc/fstab"
     boots_by = boot_method(

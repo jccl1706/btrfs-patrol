@@ -2,6 +2,7 @@
 import contextlib
 import io
 import os
+import platform
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,9 +10,16 @@ from unittest import mock
 
 from support import make_snapshot
 
-from btrfs_patrol import btrfs, selinux, system
+from btrfs_patrol import boot, btrfs, selinux, system
 from btrfs_patrol import config as config_mod
-from btrfs_patrol.cli import App, build_parser, cmd_delete, cmd_snapshot, main
+from btrfs_patrol.cli import (
+    App,
+    build_parser,
+    cmd_delete,
+    cmd_prune_kernels,
+    cmd_snapshot,
+    main,
+)
 from btrfs_patrol.errors import PatrolError
 from btrfs_patrol.output import Console
 from btrfs_patrol.snapshots import SnapshotStore
@@ -292,3 +300,80 @@ class SubvolumeCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PruneKernelsTests(unittest.TestCase):
+    """prune-kernels removes boot entries for kernels with no modules."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        snapshots_dir = base / "snapshots"
+        snapshots_dir.mkdir()
+        config = base / "config.toml"
+        config.write_text(f'[filesystem]\nsnapshots_dir = "{snapshots_dir}"\n')
+        self.out = io.StringIO()
+        # Console binds its streams at construction, so give it both explicitly:
+        # info goes to out, warnings to err.
+        self.err = io.StringIO()
+        self.app = App(config_mod.load(config), SnapshotStore(snapshots_dir),
+                       Console("never", out=self.out, err=self.err))
+
+    def run_command(self, *argv, stale=frozenset(), left=frozenset()):
+        """Run the command; returns stdout and stderr together, warnings included.
+
+        stale is what the first scan finds; left is what a second scan still
+        finds afterwards, standing for entries kernel-install did not remove.
+        """
+        args = build_parser().parse_args(["prune-kernels", *argv])
+        scans = [set(stale), set(left)]
+        with mock.patch.object(boot, "stale_kernel_versions", side_effect=scans):
+            with mock.patch.object(boot, "remove_boot_entry") as remove:
+                code = cmd_prune_kernels(self.app, args)
+        return code, self.out.getvalue() + self.err.getvalue(), remove
+
+    def test_nothing_stale(self):
+        code, out, remove = self.run_command()
+        self.assertEqual(code, 0)
+        self.assertIn("nothing to remove", out)
+        remove.assert_not_called()
+
+    def test_dry_run_lists_but_removes_nothing(self):
+        code, out, remove = self.run_command("-n", stale={"9.9.9-1.fc99.x86_64"})
+        self.assertEqual(code, 0)
+        self.assertIn("9.9.9-1.fc99.x86_64", out)
+        self.assertIn("dry run", out)
+        remove.assert_not_called()
+
+    def test_removes_every_stale_entry(self):
+        stale = {"9.9.9-1.fc99.x86_64", "9.9.8-1.fc99.x86_64"}
+        code, _, remove = self.run_command("-y", stale=stale)
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(call.args[0] for call in remove.call_args_list), sorted(stale))
+
+    def test_never_removes_the_running_kernel(self):
+        code, out, remove = self.run_command("-y", stale={platform.release()})
+        self.assertEqual(code, 0)
+        remove.assert_not_called()
+        self.assertIn("nothing to remove", out)
+
+    def test_warns_that_rolling_forward_needs_the_entries_back(self):
+        _, out, _ = self.run_command("-n", stale={"9.9.9-1.fc99.x86_64"})
+        self.assertIn("kernel-install add-all", out)
+
+    def test_reports_an_entry_kernel_install_could_not_remove(self):
+        """kernel-install exits 0 even when it removes nothing, so verify instead."""
+        version = "9.9.9-1.fc99.x86_64"
+        code, out, remove = self.run_command("-y", stale={version}, left={version})
+        self.assertEqual(code, 1)
+        remove.assert_called_once_with(version)
+        self.assertIn("has to be removed by hand", out)
+        self.assertNotIn(f"removed the boot entry for {version}", out)
+
+    def test_reports_only_the_entries_that_really_went(self):
+        gone, stuck = "9.9.9-1.fc99.x86_64", "9.9.8-1.fc99.x86_64"
+        code, out, _ = self.run_command("-y", stale={gone, stuck}, left={stuck})
+        self.assertEqual(code, 1)
+        self.assertIn(f"removed the boot entry for {gone}", out)
+        self.assertNotIn(f"removed the boot entry for {stuck}", out)

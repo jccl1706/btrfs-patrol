@@ -240,6 +240,26 @@ configuration are never pruned. Taking a manual, timer or dnf snapshot prunes
 that subvolume too.
 .
 .TP
+.B prune\-kernels [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-y\fR|\fB\-\-yes\fR]
+Remove the boot entries of kernels that
+.I /usr/lib/modules
+has no modules for, using
+.BR kernel\-install (8).
+A rollback restores the modules but not
+.IR /boot ,
+so a snapshot taken before a kernel was installed leaves that kernel's entry
+behind, offering a boot with no drivers to load. The running kernel is never
+touched, and
+.B \-\-dry\-run
+lists the entries without removing them. An entry that
+.BR kernel\-install (8)
+does not manage is left in place and reported, because kernel\-install succeeds
+whether or not it removed anything. Rolling forward to a snapshot that
+did have those kernels needs
+.B "kernel\-install add\-all"
+to put their entries back.
+.
+.TP
 .B rollback \fIID\fR [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-y\fR|\fB\-\-yes\fR]
 Roll the subvolume snapshot
 .I ID
@@ -927,6 +947,38 @@ is a separate subvolume: it is neither snapshotted nor rolled back unless the
 configuration has a
 .B [subvolumes.home]
 table, and then only on its own.
+.PP
+A release upgrade with
+.B "dnf system\-upgrade"
+is covered, with one limit. The download stage installs nothing and so takes no
+snapshot; the offline transaction that runs at the next boot does fire the hook,
+so the state from before the upgrade is kept without asking. Rolling that
+snapshot back restores the older release in full, including the packages the
+upgrade added and the ones it removed. But
+.I /boot
+is not part of the root subvolume, so the new release's kernel stays installed
+while the restored root has no modules for it.
+.B rollback
+warns and names the kernel to choose in the boot menu; choosing the newer one
+boots a kernel whose modules are gone. Until that kernel's boot entry is gone
+the choice has to be made by hand at every boot, so remove the entry once the
+restored system is running:
+.PP
+.RS
+.EX
+sudo btrfs\-patrol prune\-kernels
+.EE
+.RE
+.PP
+The boot menu then offers only kernels the restored system can run, and
+.B rollback
+stops warning about it.
+.B "kernel\-install add\-all"
+does not do this job: it enumerates kernels from
+.IR /usr/lib/modules ,
+which the rollback has already emptied of that version, so it cannot see the
+entry that needs removing, and it rebuilds the images of every kernel it does
+find, which is slow.
 .PP
 There are no boot menu entries for snapshots yet, so a system too broken to
 log in to is recovered from a live system, as in

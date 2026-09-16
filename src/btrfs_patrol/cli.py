@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shutil
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from btrfs_patrol import __version__, btrfs, dnf, rollback, selinux, setup, system
+from btrfs_patrol import __version__, boot, btrfs, dnf, rollback, selinux, setup, system
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.config import ROOT, Config, ManagedSubvolume
 from btrfs_patrol.errors import PatrolError
@@ -191,6 +192,47 @@ def cmd_prune(app: App, args: argparse.Namespace) -> int:
         app.console.info(f"pruned snapshot {snapshot.id}")
     if not pruned:
         app.console.info("nothing to prune")
+    return 0
+
+
+def cmd_prune_kernels(app: App, args: argparse.Namespace) -> int:
+    running = platform.release()
+    # The running kernel always has modules, so it is never stale; guard anyway,
+    # because removing its entry would leave nothing to boot.
+    stale = sorted(version for version in boot.stale_kernel_versions() if version != running)
+    if not stale:
+        app.console.info("every boot entry has modules; nothing to remove")
+        return 0
+    require_confirmation_possible(args.yes or args.dry_run)
+    app.print(f"boot entries without modules in {boot.MODULES}:")
+    for version in stale:
+        app.print(f"  {version}")
+    app.console.warn(
+        "a snapshot taken while these kernels were installed will need "
+        "'kernel-install add-all' after rolling forward to it"
+    )
+    if args.dry_run:
+        app.console.info("dry run: nothing changed")
+        return 0
+    question = f"Remove {len(stale)} boot {'entry' if len(stale) == 1 else 'entries'}?"
+    if not confirm(app.console, question, args.yes):
+        app.console.info("nothing changed")
+        return 1
+    for version in stale:
+        boot.remove_boot_entry(version)
+    # kernel-install only removes entries it owns, and exits 0 either way, so
+    # check rather than report success on its behalf.
+    remaining = boot.stale_kernel_versions()
+    for version in stale:
+        if version not in remaining:
+            app.console.info(f"removed the boot entry for {version}")
+    left = [version for version in stale if version in remaining]
+    if left:
+        app.console.warn(
+            f"still has a boot entry after kernel-install remove: {', '.join(left)}; "
+            "an entry kernel-install does not manage has to be removed by hand"
+        )
+        return 1
     return 0
 
 
@@ -438,6 +480,16 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
 
     add("prune", cmd_prune, "delete each subvolume's oldest snapshots beyond its max_snapshots", True)
+
+    command = add(
+        "prune-kernels", cmd_prune_kernels,
+        "remove boot entries for kernels this system has no modules for", True,
+    )
+    command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
+    command.add_argument(
+        "-n", "--dry-run", action="store_true",
+        help="run every check and show what would be removed, without changing anything",
+    )
 
     command = add("rollback", cmd_rollback,
                   "roll a subvolume back to one of its snapshots, then reboot to use it", True)

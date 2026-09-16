@@ -29,10 +29,15 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import BinaryIO
 
+from btrfs_patrol import system
+
 BOOT_ENTRIES = Path("/boot/loader/entries")
 # Where the EFI system partition may be mounted; UKIs live in EFI/Linux below it.
 ESP_MOUNTS = (Path("/boot"), Path("/efi"), Path("/boot/efi"))
 UKI_DIR = "EFI/Linux"
+# Where a kernel's modules live, and the tool that owns its boot entry.
+MODULES = Path("/usr/lib/modules")
+KERNEL_INSTALL = "kernel-install"
 LOCATIONS = f"{BOOT_ENTRIES} or {UKI_DIR} (unified kernel images)"
 
 # 'uname -r': starts with a digit, has a dot, no spaces.
@@ -155,3 +160,31 @@ def installed_kernel_versions(
             if version:
                 versions.add(version)
     return versions
+
+
+def stale_kernel_versions(
+    modules: Path = MODULES,
+    entries_dir: Path = BOOT_ENTRIES,
+    esp_mounts: Iterable[Path] = ESP_MOUNTS,
+) -> set[str]:
+    """Kernel versions that have a boot entry but no modules on this system.
+
+    A rollback restores /usr/lib/modules but not /boot, so a snapshot taken
+    before a kernel was installed leaves that kernel's entry behind, offering a
+    boot with no drivers. These are the entries worth removing.
+    """
+    return {
+        version
+        for version in installed_kernel_versions(entries_dir, esp_mounts)
+        if not (modules / version).is_dir()
+    }
+
+
+def remove_boot_entry(version: str) -> str:
+    """Remove a kernel's boot entry and images with kernel-install(8)."""
+    return system.run(
+        KERNEL_INSTALL,
+        "remove",
+        version,
+        missing=f"{KERNEL_INSTALL} not found; install systemd-udev",
+    )
