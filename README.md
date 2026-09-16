@@ -1,30 +1,42 @@
 # btrfs-patrol
 
-A btrfs snapshot manager and rollback tool for Fedora.
+**A btrfs snapshot manager and rollback tool for Fedora's default layout.**
 
-> **Status: 0.3.0.** Every command has been tested on a Fedora
-> 44 VM and on a ThinkPad T480 (LUKS, LVM and btrfs), from source and from the
-> RPM: setup, snapshots from dnf and the timer, rollback to an older state and
-> forward again, and hibernating with a rollback waiting for its reboot - and
-> again, from the RPM, on a VM with SELinux enforcing, with no denials. 0.2.0
-> was tested again on the T480 (systemd-boot entries, SELinux enforcing),
-> upgraded from 0.1.1, and its unified kernel image support on a VM booting
-> one. A fresh Fedora 44 Workstation install with its default layout and GRUB
-> was tested from COPR: setup, dnf and timer snapshots, and a rollback and
-> roll forward with reboots. Snapshots of other subvolumes (0.3.0) were tested
-> on that VM and on the T480: a rollback of `/home` and a rollback of root,
-> each with a reboot, each leaving the other subvolume untouched. 0.4.0 was
-> tested by upgrading that VM from Fedora 44 to 45 with `dnf system-upgrade`
-> and rolling it back: the offline transaction takes its own snapshot, the
-> restored system came back on the older release with the packages the
-> upgrade had added and removed put back, and `prune-kernels` removed the
-> stranded kernel's boot entry. 0.4.1 is a hardening release: a review of every
-> module found, and the tests now cover, a snapshot taken into an unmounted store
-> (which landed in the root subvolume and was never seen again), a rollback
-> acting on checks that had stopped being true while it waited to be confirmed,
-> an interrupted rollback that could leave no root subvolume at all, and three
-> ways the dnf hook could abort or hang a transaction. It is young software on
-> the part of your system you most need to work, so keep backups.
+[![COPR build status](https://copr.fedorainfracloud.org/coprs/jccl1706/btrfs-patrol/package/btrfs-patrol/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/jccl1706/btrfs-patrol/)
+![Fedora 43+](https://img.shields.io/badge/Fedora-43%2B-51A2DA?logo=fedora&logoColor=white)
+![License GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
+
+A snapshot before every `dnf` transaction and once a day, and one command to put
+the system back:
+
+```console
+$ btrfs-patrol list
+ ID  DATE        TIME      KERNEL                 KIND      DESCRIPTION
+  1  2026-09-15  11:10:18  7.2.4-200.fc44.x86_64  manual    before the new kernel
+  2  2026-09-16  11:02:10  7.2.4-200.fc44.x86_64  dnf-pre   upgrade kernel-core, mesa +12 more
+ *3  2026-09-16  11:10:14  7.2.4-200.fc44.x86_64  rollback  state before rollback to 2
+
+$ sudo btrfs-patrol rollback 1
+ ID  DATE        TIME      KERNEL                 KIND    DESCRIPTION
+  1  2026-09-15  11:10:18  7.2.4-200.fc44.x86_64  manual  before the new kernel
+root subvolume:     root (ID 256) on /dev/vda2
+found at boot by:   the btrfs default subvolume
+running kernel:     7.2.4-200.fc44.x86_64 (modules in the snapshot, boot entry present)
+nested subvolumes:  var/lib/portables (kept, moved into the restored root)
+current state:      kept as a new snapshot of kind 'rollback'
+Roll back to snapshot 1? [y/N] y
+:: rolled back to snapshot 1; the previous state is kept as snapshot 4
+:: reboot to start the restored system
+```
+
+It targets the layout `dnf` and Anaconda give you - btrfs with `root` and `home`
+subvolumes, `/boot` on its own partition, optionally LUKS - and nothing else, so
+it can check each step rather than guess.
+
+> **Status: 0.4.1.** Young software, on the part of your system you most need to
+> work. Every release is tested by hand on real hardware and in VMs, including
+> rollbacks with reboots - see [Tested on](#tested-on) - but snapshots are not
+> backups, so keep backups too.
 
 btrfs-patrol is inspired by [timepatrol](https://github.com/abdeoliveira/timepatrol)
 and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
@@ -195,6 +207,19 @@ dnf = false           # in dnf's snapshots too (default: false)
 
 The path has to be a subvolume already: btrfs-patrol doesn't turn a directory
 into one.
+
+## Tested on
+
+Every release is exercised by hand, not only by the test suite: real rollbacks,
+real reboots, on hardware and in VMs.
+
+| Version | What was tested |
+| --- | --- |
+| 0.1.x - 0.2.0 | Fedora 44 VM and a ThinkPad T480 (LUKS, LVM, btrfs), from source and from the RPM: setup, snapshots from dnf and the timer, rollback and roll forward, and hibernating with a rollback waiting for its reboot. Again from the RPM on a VM with SELinux enforcing, with no denials. |
+| 0.2.0 | The T480 again (systemd-boot entries, SELinux enforcing), upgraded from 0.1.1, and unified kernel image support on a VM booting one. |
+| 0.3.0 | A fresh Fedora 44 Workstation install with the default layout and GRUB, from COPR: setup, dnf and timer snapshots, rollback and roll forward with reboots. Snapshots of other subvolumes on that VM and the T480: `/home` and root rolled back separately, each leaving the other untouched. |
+| 0.4.0 | A Fedora 44 to 45 upgrade with `dnf system-upgrade`, rolled back: the offline transaction takes its own snapshot, the restored system came back on the older release with the packages the upgrade added and removed put back, and `prune-kernels` removed the stranded kernel's boot entry. |
+| 0.4.1 | A review of every module. The tests now cover a snapshot taken into an unmounted store, a rollback acting on checks that had stopped being true while it waited to be confirmed, an interrupted rollback that could leave no root subvolume, and three ways the dnf hook could abort or hang a transaction. 162 tests to 212. |
 
 ## Development
 
