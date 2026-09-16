@@ -396,21 +396,33 @@ def cmd_check(app: App, args: argparse.Namespace) -> int:
     mounts = system.read_mounts()
 
     root = system.find_mount(ROOT_MOUNT, mounts)
-    pending = rollback.pending_rollback(config, root)
     booted = rollback.mounted_snapshot(config, root)
     if root is None or root.fstype != "btrfs":
         problems.append("/ is not a btrfs filesystem")
-    elif pending is not None:
-        # Not a problem: / is the previous system until the reboot that starts the restored one.
-        app.console.warn(f"{rollback.pending_rollback_message(pending)}; reboot to start the restored system")
     elif booted is not None:
-        # Not a problem either: this is a snapshot's own boot entry, booted on
-        # purpose to repair a system that would not start. Saying "/ is not the
-        # root subvolume" here would be true and useless.
-        app.console.warn(
-            f"booted from snapshot {booted}, read-only: the system's own root subvolume is not "
-            f"running. 'btrfs-patrol rollback {booted}' or another ID restores it, then reboot"
-        )
+        # / comes from a snapshot for one of two reasons, and telling them apart
+        # needs to read the subvolume's read-only property, which needs root.
+        # Without it, say so rather than pick one: reporting a rollback that is
+        # not happening sends the user to reboot for nothing.
+        try:
+            read_only = btrfs.is_read_only(config.snapshots_dir / str(booted) / SUBVOLUME_NAME)
+        except (PatrolError, OSError):
+            app.console.warn(
+                f"/ is mounted from snapshot {booted}; run as root to tell whether a rollback "
+                "is waiting for a reboot or this is the snapshot's own boot entry"
+            )
+        else:
+            if read_only:
+                # A snapshot's own boot entry, booted to repair a system that
+                # would not start. Not a problem, and not a pending rollback.
+                app.console.warn(
+                    f"booted from snapshot {booted}, read-only: the system's own root subvolume "
+                    f"is not running. 'btrfs-patrol rollback <ID>' restores it, then reboot"
+                )
+            else:
+                app.console.warn(
+                    f"{rollback.pending_rollback_message(booted)}; reboot to start the restored system"
+                )
     elif root.root != f"/{config.root_subvolume}":
         problems.append(
             f"/ is subvolume {root.root!r}, "

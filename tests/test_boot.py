@@ -276,6 +276,16 @@ class SnapshotOptionsTests(unittest.TestCase):
         cmdline = "root=UUID=x ro systemd.volatile=overlay"
         self.assertNotIn("systemd.volatile", self.options(cmdline))
 
+    def test_a_unified_kernel_images_own_initrd_argument_is_dropped(self):
+        """A Type #1 entry names the initrd in its own field; twice is wrong."""
+        cmdline = (
+            "initrd=\\e1b956a68b514aa9bbcce22e2e1fc1ab\\7.2.5-200.fc44.x86_64\\initrd "
+            "root=UUID=x rw rd.luks.uuid=215f2849"
+        )
+        options = snapshot_options(cmdline, "snapshots/9/snapshot")
+        self.assertNotIn("initrd=", options)
+        self.assertIn("rd.luks.uuid=215f2849", options, "LUKS must survive")
+
     def test_a_transient_machine_id_is_dropped(self):
         """A UKI bakes it in; on a read-only root the commit service then fails."""
         cmdline = "root=UUID=x ro systemd.machine_id=0108a8f87e784af98bf70815ff87d439"

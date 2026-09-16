@@ -233,6 +233,10 @@ def snapshot_options(cmdline: str, subvolume_path: str) -> str:
       filesystem underneath it.
     - systemd.volatile= is dropped. An overlay needs support in the initrd that
       Fedora's does not build, and the boot hangs after loading SELinux policy.
+    - initrd= is dropped. A unified kernel image's command line names its own
+      initrd that way, with EFI's backslashes, but a Type #1 entry names the
+      initrd in its own field and the loader passes it. Keeping both tells the
+      loader about it twice.
     - systemd.machine_id= is dropped. A unified kernel image bakes it into its
       command line, and it tells systemd the machine-id is transient and must be
       committed to disk at boot, which a read-only root cannot do:
@@ -249,6 +253,7 @@ def snapshot_options(cmdline: str, subvolume_path: str) -> str:
                 if option and option.partition("=")[0] not in ("subvol", "subvolid")
             )
         elif key in (
+            "initrd",
             "resume",
             "resume_offset",
             "systemd.volatile",
