@@ -228,3 +228,40 @@ class SnapshotStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StoreResilienceTests(unittest.TestCase):
+    """A half-made entry must not take the whole store down with it."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.store = SnapshotStore(Path(tmp.name))
+        for snapshot_id in (1, 2):
+            self.store.path(snapshot_id).mkdir()
+            self.store.save(make_snapshot(snapshot_id))
+
+    def test_an_entry_without_metadata_is_skipped_not_fatal(self):
+        """Left by a crash, or seen mid-creation by a reader holding no lock."""
+        self.store.path(3).mkdir()
+        self.assertEqual([s.id for s in self.store.load_all()], [1, 2])
+
+    def test_pruning_still_works_with_a_half_made_entry_present(self):
+        """This is what used to stop silently, so snapshots piled up for ever."""
+        self.store.path(3).mkdir()
+        pruned = select_for_pruning(self.store.load_all(), max_snapshots=1)
+        self.assertEqual([s.id for s in pruned], [1])
+
+    def test_check_still_sees_the_broken_entry(self):
+        """Tolerant reads must not mean the problem is hidden."""
+        self.store.path(3).mkdir()
+        with self.assertRaisesRegex(PatrolError, "snapshot 3 has no"):
+            self.store.load(3)
+        self.assertIn(3, self.store.ids())
+
+    def test_an_interrupted_snapshot_leaves_nothing_behind(self):
+        """Ctrl-C during 'btrfs subvolume snapshot' used to leave metadata alone."""
+        with mock.patch.object(btrfs, "create_snapshot", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.store.create(Path("/some/source"), kind="manual")
+        self.assertEqual(self.store.ids(), [1, 2], "the half-made entry must be gone")

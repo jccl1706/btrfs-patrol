@@ -362,12 +362,45 @@ class RollbackPlan:
             f"takes effect:       {effect}",
         ]
 
+    def _revalidate(self, snapshots: Path, current: Path) -> None:
+        """Re-check under the lock what prepare() checked before the prompt.
+
+        prepare() runs every check, then the plan is printed and the user is
+        asked to confirm - an unbounded wait. The scheduled snapshot, a dnf
+        transaction or another terminal can all take the lock in between, and
+        the plan is a snapshot of values, not a reservation. Acting on it
+        anyway moves the live subvolume into the store on the strength of
+        checks that are no longer true.
+        """
+        if not (snapshots / str(self.target.id) / SUBVOLUME_NAME).is_dir():
+            raise PatrolError(
+                f"snapshot {self.target.id} is gone: pruned or deleted while the rollback "
+                "was waiting to be confirmed. Nothing has changed; run the command again"
+            )
+        if btrfs.subvolume_id(current) != self.current_id:
+            raise PatrolError(
+                f"{current} is no longer subvolume {self.current_id}: it changed while the "
+                "rollback was waiting to be confirmed. Nothing has changed; run the command again"
+            )
+        nested = nested_subvolumes(btrfs.list_subvolumes(self.top), self.location)
+        if nested != self.nested:
+            # Moving only the subvolumes the plan knows about would silently
+            # destroy any created since, and leave the saved snapshot holding a
+            # nested subvolume, which can never be deleted.
+            raise PatrolError(
+                f"the subvolumes inside {self.location} changed while the rollback was waiting "
+                f"to be confirmed ({', '.join(nested) or 'none'} now, "
+                f"{', '.join(self.nested) or 'none'} when the plan was made). "
+                "Nothing has changed; run the command again"
+            )
+
     def execute(self) -> Snapshot:
         """Roll back, and return the snapshot that keeps the previous state."""
         snapshots = self.top / self.config.snapshots_subvolume
         current = self.top / self.location
         undo: UndoSteps = []
         with self.store.lock():
+            self._revalidate(snapshots, current)
             try:
                 saved = self.store.new_entry(
                     kind="rollback",

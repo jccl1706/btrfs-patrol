@@ -113,6 +113,17 @@ class CliTests(unittest.TestCase):
             Mount("/snapshots", str(self.snapshots_dir), "btrfs", "/dev/vda2"),
         ]
 
+    def test_delete_refuses_the_snapshot_the_system_is_running_from(self):
+        """After a rollback / is mounted FROM snapshot 8, and the tool names it."""
+        self.store.path(8).mkdir()
+        self.store.save(make_snapshot(8, kind="rollback", keep=True))
+        self.store.subvolume(8).mkdir()
+        args = build_parser().parse_args(["delete", "8", "--yes"])
+        with mock.patch.object(system, "read_mounts", return_value=self.pending_mounts()):
+            with self.assertRaisesRegex(PatrolError, "running from"):
+                cmd_delete(self.app(io.StringIO()), args)
+        self.assertIn(8, self.store.ids(), "it must still be there")
+
     def test_check_during_a_pending_rollback_warns_but_passes(self):
         for snapshot_id in self.store.ids():
             self.store.subvolume(snapshot_id).mkdir()

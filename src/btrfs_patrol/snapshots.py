@@ -138,7 +138,22 @@ class SnapshotStore:
         return Snapshot.from_json(snapshot_id, data)
 
     def load_all(self) -> list[Snapshot]:
-        return [self.load(snapshot_id) for snapshot_id in self.ids()]
+        """Every snapshot whose metadata can be read.
+
+        An entry with no readable info.json is skipped, not fatal. It is either
+        being created right now - readers hold no lock, and the window is a
+        mkdir away - or was left behind by a crash. Raising here stopped list,
+        delete and, expensively, prune: snapshots then accumulated for ever with
+        nothing to say why. 'btrfs-patrol check' reports them: it walks the ids
+        itself and turns a failed load into a problem, so they are not hidden.
+        """
+        snapshots = []
+        for snapshot_id in self.ids():
+            try:
+                snapshots.append(self.load(snapshot_id))
+            except PatrolError:
+                continue
+        return snapshots
 
     def save(self, snapshot: Snapshot) -> None:
         system.write_atomic(
@@ -192,7 +207,9 @@ class SnapshotStore:
         self.path(snapshot.id).mkdir()
         try:
             self.save(snapshot)
-        except Exception:
+        # BaseException: a Ctrl-C here would otherwise leave an entry directory
+        # with no metadata, which every later read of the store trips over.
+        except BaseException:
             self.remove_entry(snapshot.id)
             raise
         return snapshot
@@ -218,7 +235,12 @@ class SnapshotStore:
         snapshot = self.new_entry(kind, description, keep, subvolume)
         try:
             btrfs.create_snapshot(source, self.subvolume(snapshot.id), readonly=True)
-        except Exception:
+        # BaseException: 'btrfs subvolume snapshot' is a foreground child and can
+        # be slow enough to look hung, so Ctrl-C here is likely. Catching only
+        # Exception left metadata with no subvolume: a snapshot that shows in the
+        # listing, cannot be rolled back to, and still counts towards
+        # max_snapshots, so the next prune evicts a real one instead.
+        except BaseException:
             self.remove_entry(snapshot.id)
             raise
         return snapshot

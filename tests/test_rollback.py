@@ -148,14 +148,27 @@ class ExecuteTests(unittest.TestCase):
             set_default_subvolume=mock.DEFAULT,
             get_default_subvolume_id=mock.DEFAULT,
             is_subvolume=mock.DEFAULT,
+            list_subvolumes=mock.DEFAULT,
         )
         self.btrfs = patcher.start()
         self.addCleanup(patcher.stop)
-        self.btrfs["create_snapshot"].side_effect = (
-            lambda source, destination, readonly=False: shutil.copytree(source, destination)
-        )
+        # execute() now re-checks the plan under the lock before touching
+        # anything, so the fakes have to tell the state before the restore from
+        # the state after it, as the real commands would.
+        self.restored = False
+
+        def fake_create_snapshot(source, destination, readonly=False):
+            shutil.copytree(source, destination)
+            self.restored = True
+
+        self.btrfs["create_snapshot"].side_effect = fake_create_snapshot
         self.btrfs["delete_subvolume"].side_effect = shutil.rmtree
-        self.btrfs["subvolume_id"].return_value = 300
+        self.subvolume_ids = {str(self.top / "root"): 256, str(self.top / "home"): 257}
+        self.btrfs["subvolume_id"].side_effect = (
+            lambda path: 300 if self.restored else self.subvolume_ids.get(str(path), 256)
+        )
+        # var/lib/portables is nested inside root, nothing is nested inside home.
+        self.btrfs["list_subvolumes"].return_value = [Subvolume(400, "root/var/lib/portables")]
         # The restored root is a subvolume unless a test says otherwise; the fake
         # create_snapshot above is a copytree, which cannot make a real one.
         self.btrfs["is_subvolume"].return_value = True
@@ -189,6 +202,29 @@ class ExecuteTests(unittest.TestCase):
         with self.assertRaises(PatrolError):
             self.plan().execute()
         self.assertEqual(self.default["id"], 256, "the default must not have moved")
+
+    def test_a_target_pruned_while_confirming_is_refused(self):
+        """The prompt is an unbounded wait; the timer can prune the target meanwhile."""
+        shutil.rmtree(self.store.subvolume(1))
+        with self.assertRaisesRegex(PatrolError, "pruned or deleted"):
+            self.plan().execute()
+        self.assert_untouched()
+
+    def test_a_changed_current_subvolume_is_refused(self):
+        self.subvolume_ids[str(self.top / "root")] = 999
+        with self.assertRaisesRegex(PatrolError, "no longer subvolume 256"):
+            self.plan().execute()
+        self.assert_untouched()
+
+    def test_a_nested_subvolume_created_while_confirming_is_refused(self):
+        """Moving only the ones the plan knows about would destroy the new one."""
+        self.btrfs["list_subvolumes"].return_value = [
+            Subvolume(400, "root/var/lib/portables"),
+            Subvolume(401, "root/var/lib/machines"),
+        ]
+        with self.assertRaisesRegex(PatrolError, "subvolumes inside root changed"):
+            self.plan().execute()
+        self.assert_untouched()
 
     def test_rollback(self):
         saved = self.plan().execute()

@@ -169,6 +169,17 @@ def cmd_keep(app: App, args: argparse.Namespace) -> int:
 
 def cmd_delete(app: App, args: argparse.Namespace) -> int:
     snapshots = app.matching(args.selector)
+    # After a rollback the subvolume is mounted FROM its snapshot until the
+    # reboot, and the rollback message names that snapshot - so deleting it is
+    # an easy thing to try. It would aim 'btrfs subvolume delete' at the running
+    # system's own subvolume.
+    in_use = set(pending_rollbacks(app.config, list(app.config.managed())).values())
+    blocked = sorted(s.id for s in snapshots if s.id in in_use)
+    if blocked:
+        raise PatrolError(
+            f"snapshot {', '.join(map(str, blocked))} is what the system is running from "
+            "after a rollback; reboot first, then delete it"
+        )
     require_confirmation_possible(args.yes)
     app.print(app.table(snapshots))
     if not confirm(app.console, f"Delete {len(snapshots)} snapshot(s)?", args.yes):
