@@ -31,6 +31,12 @@ _SCHEMA: dict[str, dict[str, tuple[type, object]]] = {
     "retention": {
         "max_snapshots": (int, 50),
     },
+    "boot": {
+        # How many snapshots get a boot menu entry, newest first; 0 writes none.
+        # Off by default: the boot menu is shared with the rest of the system,
+        # and filling it is not something to do to someone unasked.
+        "entries": (int, 0),
+    },
     "dnf": {
         "pre_snapshot": (bool, True),
         "post_snapshot": (bool, False),
@@ -75,6 +81,8 @@ class Config:
     snapshots_subvolume: str
     snapshots_dir: Path
     max_snapshots: int
+    boot_entries: int
+    """How many snapshots get a boot menu entry; 0 writes none."""
     dnf_pre_snapshot: bool
     dnf_post_snapshot: bool
     color: str
@@ -151,6 +159,7 @@ def parse(data: dict[str, object]) -> Config:
         snapshots_subvolume=filesystem["snapshots_subvolume"],
         snapshots_dir=Path(filesystem["snapshots_dir"]),
         max_snapshots=max_snapshots,
+        boot_entries=values["boot"]["entries"],
         dnf_pre_snapshot=values["dnf"]["pre_snapshot"],
         dnf_post_snapshot=values["dnf"]["post_snapshot"],
         color=values["output"]["color"],
@@ -214,6 +223,8 @@ def _validate(config: Config) -> None:
         raise PatrolError("filesystem.snapshots_dir must not contain whitespace")
     if config.max_snapshots < 1:
         raise PatrolError("retention.max_snapshots must be at least 1")
+    if config.boot_entries < 0:
+        raise PatrolError("boot.entries must be 0 or more")
     if config.color not in COLOR_CHOICES:
         raise PatrolError(f"output.color must be one of: {', '.join(COLOR_CHOICES)}")
 

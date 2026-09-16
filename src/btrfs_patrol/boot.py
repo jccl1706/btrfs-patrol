@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import re
 import struct
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import BinaryIO
 
 from btrfs_patrol import system
+from btrfs_patrol.snapshots import SUBVOLUME_NAME
 
 BOOT_ENTRIES = Path("/boot/loader/entries")
 # Where the EFI system partition may be mounted; UKIs live in EFI/Linux below it.
@@ -38,6 +39,10 @@ UKI_DIR = "EFI/Linux"
 # Where a kernel's modules live, and the tool that owns its boot entry.
 MODULES = Path("/usr/lib/modules")
 KERNEL_INSTALL = "kernel-install"
+# Our own Type #1 entries. The prefix is how we recognise them again:
+# nothing else may be touched in a directory the boot loader owns.
+ENTRY_PREFIX = "btrfs-patrol-"
+MACHINE_ID = Path("/etc/machine-id")
 LOCATIONS = f"{BOOT_ENTRIES} or {UKI_DIR} (unified kernel images)"
 
 # 'uname -r': starts with a digit, has a dot, no spaces.
@@ -211,3 +216,153 @@ def remove_boot_entry(version: str) -> str:
         version,
         missing=f"{KERNEL_INSTALL} not found; install systemd-udev",
     )
+
+
+def snapshot_options(cmdline: str, subvolume_path: str) -> str:
+    """The kernel command line that boots a snapshot, from the running one.
+
+    Derived rather than built, so that everything the system needs to reach its
+    disk at all - rd.luks.uuid, rd.lvm.lv, root=UUID - is carried over untouched.
+    Four things change:
+
+    - subvol=/subvolid= in rootflags is replaced with the snapshot's path, while
+      the rest of rootflags (compress=, noatime) is kept.
+    - ro, never rw: a snapshot is read-only and btrfs refuses the writes anyway.
+    - resume= is dropped. Resuming a hibernation image taken by the normal
+      system on top of a snapshot would restore memory that does not match the
+      filesystem underneath it.
+    - systemd.volatile= is dropped. An overlay needs support in the initrd that
+      Fedora's does not build, and the boot hangs after loading SELinux policy.
+    - systemd.machine_id= is dropped. A unified kernel image bakes it into its
+      command line, and it tells systemd the machine-id is transient and must be
+      committed to disk at boot, which a read-only root cannot do:
+      systemd-machine-id-commit.service then fails and the system comes up
+      degraded. The snapshot's own /etc/machine-id holds the same value.
+    """
+    words, flags = [], []
+    for word in cmdline.split():
+        key, _, value = word.partition("=")
+        if key == "rootflags":
+            flags.extend(
+                option
+                for option in value.split(",")
+                if option and option.partition("=")[0] not in ("subvol", "subvolid")
+            )
+        elif key in (
+            "resume",
+            "resume_offset",
+            "systemd.volatile",
+            "systemd.machine_id",
+        ) or word in ("ro", "rw"):
+            continue
+        else:
+            words.append(word)
+    flags.append(f"subvol={subvolume_path}")
+    words.append("ro")
+    words.append("rootflags=" + ",".join(flags))
+    return " ".join(words)
+
+
+def entry_text(
+    title: str, version: str, linux: str, initrd: str, options: str, sort_key: str = "zz-btrfs-patrol"
+) -> str:
+    """A Boot Loader Specification Type #1 entry.
+
+    Read by systemd-boot and, through blscfg, by Fedora's GRUB, so one file
+    serves both. The sort-key puts snapshots below the real entries rather than
+    between them.
+    """
+    return (
+        f"title      {title}\n"
+        f"version    {version}\n"
+        f"linux      {linux}\n"
+        f"initrd     {initrd}\n"
+        f"options    {options}\n"
+        f"sort-key   {sort_key}\n"
+    )
+
+
+def kernel_files(boot_dir: Path, machine_id: str, version: str) -> tuple[str, str] | None:
+    """Paths to a kernel and its initrd, relative to $BOOT, or None if they are missing.
+
+    Both layouts kernel-install can be configured with are looked for. With
+    layout=uki the images still land in <machine-id>/<version>/ on the way to
+    being packed into the unified image, which is what makes a Type #1 entry
+    possible on a system that otherwise has none.
+    """
+    candidates = (
+        (f"{machine_id}/{version}/linux", f"{machine_id}/{version}/initrd"),
+        (f"vmlinuz-{version}", f"initramfs-{version}.img"),
+    )
+    for linux, initrd in candidates:
+        if (boot_dir / linux).is_file() and (boot_dir / initrd).is_file():
+            return f"/{linux}", f"/{initrd}"
+    return None
+
+
+def snapshot_entries(entries_dir: Path) -> dict[int, Path]:
+    """Our own entries, by snapshot ID. Entries we did not write are never touched."""
+    found = {}
+    for path in sorted(entries_dir.glob(f"{ENTRY_PREFIX}*.conf")):
+        stem = path.name[len(ENTRY_PREFIX) : -len(".conf")]
+        if stem.isascii() and stem.isdigit():
+            found[int(stem)] = path
+    return found
+
+
+def sync_snapshot_entries(
+    entries_dir: Path,
+    boot_dir: Path,
+    wanted: Sequence[tuple[int, str, str]],
+    machine_id: str,
+    cmdline: str,
+    snapshots_subvolume: str,
+) -> tuple[list[int], list[int], list[int]]:
+    """Make the boot menu match the snapshots that should have an entry.
+
+    wanted is (snapshot id, kernel version, title), newest first. Returns the
+    IDs written, removed, and skipped because their kernel is no longer on the
+    boot partition - a snapshot whose kernel has been removed cannot be booted,
+    and an entry promising otherwise is worse than no entry.
+
+    Only files this program wrote are ever removed: the directory belongs to the
+    boot loader, and kernel-install writes its own entries into it.
+    """
+    entries_dir.mkdir(parents=True, exist_ok=True)
+    existing = snapshot_entries(entries_dir)
+    written, skipped = [], []
+    for snapshot_id, version, title in wanted:
+        files = kernel_files(boot_dir, machine_id, version)
+        if files is None:
+            skipped.append(snapshot_id)
+            continue
+        linux, initrd = files
+        subvolume = f"{snapshots_subvolume.strip('/')}/{snapshot_id}/{SUBVOLUME_NAME}"
+        text = entry_text(title, version, linux, initrd, snapshot_options(cmdline, subvolume))
+        path = entries_dir / f"{ENTRY_PREFIX}{snapshot_id}.conf"
+        if not path.is_file() or path.read_text() != text:
+            system.write_atomic(path, text, mode=0o600)
+        written.append(snapshot_id)
+    keep = set(written)
+    removed = []
+    for snapshot_id, path in sorted(existing.items()):
+        if snapshot_id not in keep:
+            path.unlink(missing_ok=True)
+            removed.append(snapshot_id)
+    return written, removed, skipped
+
+
+def boot_partition(machine_id: str, esp_mounts: Iterable[Path] = ESP_MOUNTS) -> Path | None:
+    """Where Type #1 entries and kernel images live, or None if it can't be found.
+
+    $BOOT is the XBOOTLDR partition when there is one and the ESP otherwise, and
+    Fedora mounts either at /boot. The machine-id directory or an existing
+    loader/entries is what identifies it.
+    """
+    for mount in (Path("/boot"), *esp_mounts):
+        try:
+            if (mount / machine_id).is_dir() or (mount / "loader/entries").is_dir():
+                return mount
+        except OSError:
+            continue
+    return None

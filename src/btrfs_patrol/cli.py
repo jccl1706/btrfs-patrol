@@ -112,6 +112,55 @@ def pending_rollbacks(config: Config, subvolumes: Sequence[ManagedSubvolume]) ->
     return pending
 
 
+def sync_boot_entries(app: App) -> None:
+    """Make the boot menu match the snapshots, and never fail the caller.
+
+    Called after anything that adds or removes snapshots. Writing to the boot
+    partition can fail in ways that have nothing to do with the snapshot that
+    was just taken - a full ESP, a read-only mount, no /boot at all - and none
+    of them are a reason to fail the snapshot, so they are warnings.
+    """
+    config = app.config
+    try:
+        machine_id = boot.MACHINE_ID.read_text().strip()
+        boot_dir = boot.boot_partition(machine_id)
+        if boot_dir is None:
+            if config.boot_entries:
+                app.console.warn("no boot partition found, so no snapshot boot entries")
+            return
+        entries_dir = boot_dir / "loader/entries"
+        # Even with the feature off, ours are cleaned up rather than left behind.
+        wanted: list[tuple[int, str, str]] = []
+        if config.boot_entries:
+            roots = sorted(
+                (s for s in app.store.load_all() if s.subvolume == ROOT),
+                key=lambda s: s.id,
+                reverse=True,
+            )
+            for snapshot in roots[: config.boot_entries]:
+                # Only a snapshot that can actually load its drivers is offered.
+                if not (app.store.subvolume(snapshot.id) / "usr/lib/modules" / snapshot.kernel).is_dir():
+                    continue
+                when = snapshot.created.strftime("%Y-%m-%d %H:%M")
+                description = snapshot.description or snapshot.kind
+                wanted.append((snapshot.id, snapshot.kernel, f"Snapshot {snapshot.id} - {when} - {description}"))
+        written, removed, skipped = boot.sync_snapshot_entries(
+            entries_dir, boot_dir, wanted, machine_id,
+            rollback.PROC_CMDLINE.read_text(), config.snapshots_subvolume,
+        )
+        for snapshot_id in written:
+            app.console.info(f"boot entry for snapshot {snapshot_id}")
+        for snapshot_id in removed:
+            app.console.info(f"removed the boot entry for snapshot {snapshot_id}")
+        if skipped:
+            app.console.warn(
+                f"no boot entry for snapshot(s) {', '.join(map(str, skipped))}: "
+                "their kernel is no longer on the boot partition"
+            )
+    except (PatrolError, OSError) as e:
+        app.console.warn(f"could not update the snapshot boot entries: {e}")
+
+
 def cmd_list(app: App, args: argparse.Namespace) -> int:
     snapshots = app.store.load_all()
     if args.selector:
@@ -155,6 +204,7 @@ def cmd_snapshot(app: App, args: argparse.Namespace) -> int:
             app.console.info(f"created snapshot {snapshot.id}" + (f" of {subvolume.name}" if named else ""))
             for pruned in app.store.prune(subvolume.max_snapshots, subvolume.name):
                 app.console.info(f"pruned snapshot {pruned.id}")
+    sync_boot_entries(app)
     return 0
 
 
@@ -205,6 +255,7 @@ def cmd_delete(app: App, args: argparse.Namespace) -> int:
             if snapshot.id in existing:
                 app.store.delete(snapshot.id)
                 app.console.info(f"deleted snapshot {snapshot.id}")
+    sync_boot_entries(app)
     return 0
 
 
@@ -219,6 +270,7 @@ def cmd_prune(app: App, args: argparse.Namespace) -> int:
         app.console.info(f"pruned snapshot {snapshot.id}")
     if not pruned:
         app.console.info("nothing to prune")
+    sync_boot_entries(app)
     return 0
 
 
@@ -345,11 +397,20 @@ def cmd_check(app: App, args: argparse.Namespace) -> int:
 
     root = system.find_mount(ROOT_MOUNT, mounts)
     pending = rollback.pending_rollback(config, root)
+    booted = rollback.mounted_snapshot(config, root)
     if root is None or root.fstype != "btrfs":
         problems.append("/ is not a btrfs filesystem")
     elif pending is not None:
         # Not a problem: / is the previous system until the reboot that starts the restored one.
         app.console.warn(f"{rollback.pending_rollback_message(pending)}; reboot to start the restored system")
+    elif booted is not None:
+        # Not a problem either: this is a snapshot's own boot entry, booted on
+        # purpose to repair a system that would not start. Saying "/ is not the
+        # root subvolume" here would be true and useless.
+        app.console.warn(
+            f"booted from snapshot {booted}, read-only: the system's own root subvolume is not "
+            f"running. 'btrfs-patrol rollback {booted}' or another ID restores it, then reboot"
+        )
     elif root.root != f"/{config.root_subvolume}":
         problems.append(
             f"/ is subvolume {root.root!r}, "

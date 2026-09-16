@@ -39,6 +39,13 @@ max_snapshots = 50
 # timer = true            # in the daily snapshot (default: true)
 # dnf = false             # in the snapshots dnf takes, too (default: false)
 
+[boot]
+# How many of the newest snapshots get a boot menu entry, so a system too
+# broken to log in to can be booted from a snapshot and rolled back from
+# there. 0 writes none, which is the default: the boot menu is shared with
+# the rest of the system. Entries boot the snapshot read-only.
+# entries = 5
+
 [dnf]
 # Take a snapshot before each dnf5 transaction (needs libdnf5-plugin-actions).
 pre_snapshot = true

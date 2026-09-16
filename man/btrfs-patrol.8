@@ -661,6 +661,21 @@ is mounted; an absolute path.
 How many snapshots that are not kept to leave when pruning; at least 1.
 .RE
 .TP
+.B [boot]
+.RS
+.TP
+.BR entries " = " 0
+How many of the newest snapshots get a boot menu entry, so a system too
+broken to log in to can be booted from a snapshot and rolled back from
+there. Zero, the default, writes none: the boot menu is shared with the
+rest of the system. An entry is only written for a snapshot whose kernel
+is still installed and whose modules the snapshot has, and only the
+entries this program wrote are ever changed or removed. They boot the
+snapshot read\-only, which leaves it unaltered, and
+.B rollback
+works from there.
+.RE
+.TP
 .B [dnf]
 .RS
 .TP

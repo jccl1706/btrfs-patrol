@@ -5,6 +5,12 @@ import unittest
 from pathlib import Path
 
 from btrfs_patrol.boot import (
+    ENTRY_PREFIX,
+    entry_text,
+    kernel_files,
+    snapshot_entries,
+    snapshot_options,
+    sync_snapshot_entries,
     installed_kernel_versions,
     parse_bls_entry,
     stale_kernel_versions,
@@ -234,3 +240,160 @@ class BootPartitionLocationTests(unittest.TestCase):
         (entries / "broken.conf").write_bytes(b"version \xff\xfe not-utf8\n")
         self.entry(entries, "6.17.1-300.fc44.x86_64")
         self.assertEqual(installed_kernel_versions(entries, ()), {"6.17.1-300.fc44.x86_64"})
+
+
+class SnapshotOptionsTests(unittest.TestCase):
+    """The snapshot's command line is derived from the running one, not invented."""
+
+    LUKS = ("BOOT_IMAGE=/vmlinuz root=UUID=4a93 ro rootflags=subvol=root,compress=zstd:1 "
+            "rd.luks.uuid=luks-3f24 rd.lvm.lv=vg0/root resume=/dev/mapper/vg0-swap quiet")
+
+    def options(self, cmdline=None, subvol="snapshots/42/snapshot"):
+        return snapshot_options(cmdline or self.LUKS, subvol)
+
+    def test_everything_needed_to_reach_the_disk_is_kept(self):
+        options = self.options()
+        for needed in ("root=UUID=4a93", "rd.luks.uuid=luks-3f24", "rd.lvm.lv=vg0/root"):
+            self.assertIn(needed, options)
+
+    def test_the_subvolume_is_replaced_and_other_rootflags_kept(self):
+        options = self.options()
+        self.assertIn("subvol=snapshots/42/snapshot", options)
+        self.assertIn("compress=zstd:1", options)
+        self.assertNotIn("subvol=root,", options)
+
+    def test_always_read_only(self):
+        self.assertIn(" ro ", f" {self.options()} ")
+        self.assertNotIn(" rw ", f" {self.options()} ")
+        self.assertIn(" ro ", f" {self.options('root=UUID=x rw')} ")
+
+    def test_resume_is_dropped(self):
+        """A hibernation image of the normal system must not land on a snapshot."""
+        self.assertNotIn("resume=", self.options())
+
+    def test_volatile_is_never_carried_over(self):
+        """It hangs the boot: the initrd does not build the overlay."""
+        cmdline = "root=UUID=x ro systemd.volatile=overlay"
+        self.assertNotIn("systemd.volatile", self.options(cmdline))
+
+    def test_a_transient_machine_id_is_dropped(self):
+        """A UKI bakes it in; on a read-only root the commit service then fails."""
+        cmdline = "root=UUID=x ro systemd.machine_id=0108a8f87e784af98bf70815ff87d439"
+        self.assertNotIn("systemd.machine_id", self.options(cmdline))
+
+    def test_a_rescue_command_line_does_not_compound(self):
+        cmdline = "root=UUID=x ro rootflags=subvol=snapshots/31/snapshot"
+        options = self.options(cmdline, "snapshots/7/snapshot")
+        self.assertIn("subvol=snapshots/7/snapshot", options)
+        self.assertNotIn("snapshots/31", options)
+
+    def test_subvolid_is_replaced_too(self):
+        cmdline = "root=UUID=x ro rootflags=subvolid=256"
+        self.assertNotIn("subvolid", self.options(cmdline))
+
+
+class EntryFileTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.boot = Path(tmp.name)
+
+    def test_kernel_files_finds_the_uki_layout(self):
+        version, mid = "7.2.4-200.fc44.x86_64", "abc123"
+        (self.boot / mid / version).mkdir(parents=True)
+        (self.boot / mid / version / "linux").write_text("k")
+        (self.boot / mid / version / "initrd").write_text("i")
+        self.assertEqual(kernel_files(self.boot, mid, version),
+                         (f"/{mid}/{version}/linux", f"/{mid}/{version}/initrd"))
+
+    def test_kernel_files_finds_the_traditional_layout(self):
+        version = "7.2.4-200.fc44.x86_64"
+        (self.boot / f"vmlinuz-{version}").write_text("k")
+        (self.boot / f"initramfs-{version}.img").write_text("i")
+        self.assertEqual(kernel_files(self.boot, "abc123", version),
+                         (f"/vmlinuz-{version}", f"/initramfs-{version}.img"))
+
+    def test_kernel_files_missing_is_none(self):
+        self.assertIsNone(kernel_files(self.boot, "abc123", "9.9.9"))
+
+    def test_only_our_own_entries_are_recognised(self):
+        entries = self.boot / "entries"
+        entries.mkdir()
+        for name in (f"{ENTRY_PREFIX}7.conf", f"{ENTRY_PREFIX}12.conf",
+                     "fedora-7.2.4.conf", f"{ENTRY_PREFIX}notanumber.conf"):
+            (entries / name).write_text("x")
+        self.assertEqual(sorted(snapshot_entries(entries)), [7, 12])
+
+    def test_entry_text_has_the_required_fields(self):
+        text = entry_text("Snapshot 7", "7.2.4", "/l", "/i", "root=UUID=x ro")
+        for key in ("title", "version", "linux", "initrd", "options", "sort-key"):
+            self.assertRegex(text, rf"(?m)^{key}\s")
+
+
+class SyncEntriesTests(unittest.TestCase):
+    """The boot menu is shared: write only ours, remove only ours."""
+
+    MID = "0108a8f87e784af98bf70815ff87d439"
+    KERNEL = "7.2.4-200.fc44.x86_64"
+    CMDLINE = "root=UUID=4a93 ro rootflags=subvol=root rd.luks.uuid=luks-3f24"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.boot = Path(tmp.name)
+        self.entries = self.boot / "loader/entries"
+        self.entries.mkdir(parents=True)
+        images = self.boot / self.MID / self.KERNEL
+        images.mkdir(parents=True)
+        (images / "linux").write_text("kernel")
+        (images / "initrd").write_text("initrd")
+
+    def sync(self, wanted):
+        return sync_snapshot_entries(
+            self.entries, self.boot, wanted, self.MID, self.CMDLINE, "snapshots"
+        )
+
+    def test_writes_an_entry_per_snapshot(self):
+        written, removed, skipped = self.sync([(7, self.KERNEL, "Snapshot 7")])
+        self.assertEqual((written, removed, skipped), ([7], [], []))
+        text = (self.entries / f"{ENTRY_PREFIX}7.conf").read_text()
+        self.assertIn("subvol=snapshots/7/snapshot", text)
+        self.assertIn("rd.luks.uuid=luks-3f24", text)
+        self.assertIn(f"/{self.MID}/{self.KERNEL}/linux", text)
+
+    def test_removes_entries_for_snapshots_that_are_gone(self):
+        self.sync([(7, self.KERNEL, "Snapshot 7"), (8, self.KERNEL, "Snapshot 8")])
+        written, removed, _ = self.sync([(8, self.KERNEL, "Snapshot 8")])
+        self.assertEqual((written, removed), ([8], [7]))
+        self.assertFalse((self.entries / f"{ENTRY_PREFIX}7.conf").exists())
+
+    def test_never_touches_an_entry_it_did_not_write(self):
+        theirs = self.entries / "fedora-7.2.4.conf"
+        theirs.write_text("title Fedora\n")
+        self.sync([])
+        self.assertTrue(theirs.exists(), "kernel-install's entries are not ours to remove")
+        self.assertEqual(theirs.read_text(), "title Fedora\n")
+
+    def test_a_snapshot_whose_kernel_is_gone_is_skipped_not_promised(self):
+        written, _, skipped = self.sync([(9, "9.9.9-gone", "Snapshot 9")])
+        self.assertEqual((written, skipped), ([], [9]))
+        self.assertFalse((self.entries / f"{ENTRY_PREFIX}9.conf").exists())
+
+    def test_zero_wanted_clears_ours_only(self):
+        self.sync([(7, self.KERNEL, "Snapshot 7")])
+        (self.entries / "fedora.conf").write_text("x")
+        _, removed, _ = self.sync([])
+        self.assertEqual(removed, [7])
+        self.assertTrue((self.entries / "fedora.conf").exists())
+
+    def test_rewriting_an_unchanged_entry_leaves_the_file_alone(self):
+        self.sync([(7, self.KERNEL, "Snapshot 7")])
+        path = self.entries / f"{ENTRY_PREFIX}7.conf"
+        before = path.stat().st_mtime_ns
+        self.sync([(7, self.KERNEL, "Snapshot 7")])
+        self.assertEqual(path.stat().st_mtime_ns, before, "no needless writes to the ESP")
+
+    def test_entries_are_not_world_readable(self):
+        self.sync([(7, self.KERNEL, "Snapshot 7")])
+        mode = (self.entries / f"{ENTRY_PREFIX}7.conf").stat().st_mode & 0o777
+        self.assertEqual(mode, 0o600)
