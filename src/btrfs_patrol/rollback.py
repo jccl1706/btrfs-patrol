@@ -383,6 +383,17 @@ class RollbackPlan:
 
                 btrfs.create_snapshot(snapshots / str(self.target.id) / SUBVOLUME_NAME, current)
                 undo.append((f"delete the new {self.name} subvolume", lambda: btrfs.delete_subvolume(current)))
+                # 'btrfs subvolume snapshot' into a path that already exists as a
+                # DIRECTORY puts the snapshot one level down and still exits 0.
+                # Nothing below would notice: the by-name path checks nothing, and
+                # the default-subvolume path asks for the id of the subvolume
+                # CONTAINING current, then compares that id against itself, so it
+                # passes while the default points somewhere else entirely.
+                if not btrfs.is_subvolume(current):
+                    raise PatrolError(
+                        f"{current} is not a subvolume after restoring snapshot {self.target.id}; "
+                        "the snapshot was placed inside it instead of becoming it"
+                    )
 
                 for path in self.nested:
                     _move_nested(old / path, current / path, undo)
@@ -425,6 +436,10 @@ def _undo(steps: UndoSteps) -> list[str]:
     for description, action in reversed(steps):
         try:
             action()
-        except Exception as e:
+        # BaseException, like the handler that calls this: the unwind is what
+        # puts the root subvolume back under its name, and a second Ctrl-C
+        # while a slow step runs must not abandon it half done. A machine with
+        # no 'root' subvolume boots to the dracut emergency shell.
+        except BaseException as e:  # noqa: BLE001
             failed.append(f"could not {description}: {e}")
     return failed

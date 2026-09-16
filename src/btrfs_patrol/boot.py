@@ -140,7 +140,15 @@ def installed_kernel_versions(
     """Kernel versions (as in 'uname -r') that have a boot entry of either type."""
     versions = set()
     for path in sorted(entries_dir.glob("*.conf")):
-        version = _valid(parse_bls_entry(path.read_text()).get("version", ""))
+        # Unreadable or non-UTF-8 entries must not escape as a traceback: this
+        # runs inside the rollback checks. errors="replace" keeps a usable
+        # version line in a file with a few bad bytes; a dangling symlink or an
+        # unreadable mode is skipped, the same way a bad UKI is.
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        version = _valid(parse_bls_entry(text).get("version", ""))
         if version:
             versions.add(version)
     seen = set()

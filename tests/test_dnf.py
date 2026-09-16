@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import io
 import json
+import os
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -193,3 +195,52 @@ class DnfHookTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class HookRobustnessTests(unittest.TestCase):
+    """The hook runs inside the user's dnf transaction: it must not crash or hang."""
+
+    def test_a_non_string_action_is_ignored_not_fatal(self):
+        """dnf answering with a list here used to raise "unhashable type"."""
+        packages = [
+            {"name": "kernel-core", "action": ["U"]},   # a list, not a string
+            {"name": "mesa", "action": "U"},
+        ]
+        self.assertEqual(dnf.describe_transaction(packages), "upgrade mesa")
+
+    def test_a_reply_whose_return_is_not_an_object_yields_no_packages(self):
+        """'return' as a list used to raise AttributeError on .get()."""
+        plugin = dnf.Plugin(io.StringIO(), io.StringIO())
+        with mock.patch.object(
+            dnf.Plugin, "request",
+            return_value={"op": "reply", "status": "OK", "return": ["kernel-core"]},
+        ):
+            self.assertEqual(plugin.transaction_packages(), [])
+
+    def test_a_half_written_reply_times_out_instead_of_hanging(self):
+        """select() bounded only the first byte; readline() could block forever."""
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, write_fd)
+        stdin = os.fdopen(read_fd, "r")
+        self.addCleanup(stdin.close)
+        os.write(write_fd, b'{"op":"reply","status":"OK"')  # no newline, then silence
+        plugin = dnf.Plugin(stdin, io.StringIO())
+        with mock.patch.object(dnf, "REPLY_TIMEOUT", 0.2):
+            started = time.monotonic()
+            reply = plugin.request({"op": "get"})
+            elapsed = time.monotonic() - started
+        self.assertIsNone(reply)
+        self.assertLess(elapsed, 5, "the read must be bounded, not blocked on a newline")
+
+    def test_a_reply_arriving_in_pieces_is_still_read(self):
+        """The bounded read must not break the normal case."""
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, write_fd)
+        stdin = os.fdopen(read_fd, "r")
+        self.addCleanup(stdin.close)
+        os.write(write_fd, b'{"op":"reply",')
+        os.write(write_fd, b'"status":"OK","return":{"trans_packages":[]}}\n')
+        plugin = dnf.Plugin(stdin, io.StringIO())
+        with mock.patch.object(dnf, "REPLY_TIMEOUT", 2):
+            reply = plugin.request({"op": "get"})
+        self.assertEqual(reply.get("status"), "OK")

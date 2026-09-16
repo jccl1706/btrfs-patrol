@@ -147,6 +147,7 @@ class ExecuteTests(unittest.TestCase):
             subvolume_id=mock.DEFAULT,
             set_default_subvolume=mock.DEFAULT,
             get_default_subvolume_id=mock.DEFAULT,
+            is_subvolume=mock.DEFAULT,
         )
         self.btrfs = patcher.start()
         self.addCleanup(patcher.stop)
@@ -155,6 +156,9 @@ class ExecuteTests(unittest.TestCase):
         )
         self.btrfs["delete_subvolume"].side_effect = shutil.rmtree
         self.btrfs["subvolume_id"].return_value = 300
+        # The restored root is a subvolume unless a test says otherwise; the fake
+        # create_snapshot above is a copytree, which cannot make a real one.
+        self.btrfs["is_subvolume"].return_value = True
         self.btrfs["set_default_subvolume"].side_effect = (
             lambda subvolume_id, mount: self.default.update(id=subvolume_id)
         )
@@ -171,6 +175,20 @@ class ExecuteTests(unittest.TestCase):
         self.assertEqual((self.root / "var/lib/portables/image.raw").read_text(), "nested data")
         self.assertEqual(self.store.ids(), [1])
         self.assertEqual(self.default["id"], 256)
+
+    def test_a_restored_root_that_is_not_a_subvolume_is_refused_and_undone(self):
+        """'btrfs subvolume snapshot' into an existing directory nests and exits 0."""
+        self.btrfs["is_subvolume"].return_value = False
+        with self.assertRaisesRegex(PatrolError, "is not a subvolume after restoring"):
+            self.plan().execute()
+        # The live root must be back where it was, not left inside the store.
+        self.assert_untouched()
+
+    def test_the_default_subvolume_is_not_touched_when_the_restore_is_bad(self):
+        self.btrfs["is_subvolume"].return_value = False
+        with self.assertRaises(PatrolError):
+            self.plan().execute()
+        self.assertEqual(self.default["id"], 256, "the default must not have moved")
 
     def test_rollback(self):
         saved = self.plan().execute()
@@ -343,3 +361,4 @@ class PrepareOtherSubvolumeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

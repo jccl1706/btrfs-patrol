@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import select
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TextIO
@@ -51,7 +53,9 @@ def describe_transaction(packages: Sequence[Mapping[str, object]]) -> str:
     names: dict[str, set[str]] = {}
     for package in packages:
         action, name = package.get("action"), package.get("name")
-        if action in ACTIONS and isinstance(name, str) and name:
+        # isinstance first: dnf answering with a list here would raise
+        # "unhashable type" out of the hook and abort the transaction.
+        if isinstance(action, str) and action in ACTIONS and isinstance(name, str) and name:
             names.setdefault(action, set()).add(name)
     parts = []
     for action, verb in ACTIONS.items():
@@ -73,13 +77,35 @@ class Plugin:
         self.stdin = stdin
         self.stdout = stdout
         self.alive = True
+        self._buffer = b""
 
-    def _reply_ready(self) -> bool:
+    def _read_reply(self) -> str:
+        """One reply line, or "" - the whole line bounded by REPLY_TIMEOUT.
+
+        Selecting once and then calling readline() only bounds the FIRST byte:
+        a plugin that writes half a reply and stalls would block here forever,
+        inside the user's dnf transaction and before any snapshot is taken. So
+        read the fd directly, keeping whatever arrives past the newline for the
+        next reply.
+        """
         try:
             fd = self.stdin.fileno()
         except (OSError, ValueError, io.UnsupportedOperation):
-            return True  # not a real file (tests): readline() won't block
-        return bool(select.select([fd], [], [], REPLY_TIMEOUT)[0])
+            return self.stdin.readline()  # not a real file (tests): cannot block on a pipe
+        deadline = time.monotonic() + REPLY_TIMEOUT
+        while b"\n" not in self._buffer:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+                return ""
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                return ""
+            if not data:  # closed
+                return ""
+            self._buffer += data
+        line, _, self._buffer = self._buffer.partition(b"\n")
+        return line.decode("utf-8", "replace") + "\n"
 
     def request(self, message: Mapping[str, object]) -> dict | None:
         """Send a request and return its reply, or None when there is no usable reply."""
@@ -87,7 +113,7 @@ class Plugin:
             return None
         try:
             print(json.dumps(message, separators=(",", ":")), file=self.stdout, flush=True)
-            line = self.stdin.readline() if self._reply_ready() else ""
+            line = self._read_reply()
         except OSError:
             line = ""
         if not line:
@@ -106,7 +132,9 @@ class Plugin:
         reply = self.request(
             {"op": "get", "domain": "trans_packages", "args": {"output": ["name", "action"]}}
         )
-        packages = ((reply or {}).get("return") or {}).get("trans_packages")
+        returned = (reply or {}).get("return")
+        # "or {}" kept a list as a list, and .get() on it raised AttributeError.
+        packages = returned.get("trans_packages") if isinstance(returned, dict) else None
         if not isinstance(packages, list):
             return []
         return [p for p in packages if isinstance(p, dict)]
@@ -176,7 +204,13 @@ def run_hook(
                     )
                 )
                 pruned.extend(store.prune(subvolume.max_snapshots, subvolume.name))
-    except (PatrolError, OSError) as e:
+    # Deliberately broad: this runs inside the user's dnf transaction, and the
+    # actions plugin treats a failing pre_transaction command as a plugin error
+    # and aborts it. A decode error from a corrupt config.toml or info.json is a
+    # ValueError, not an OSError, and used to traceback out of here and break
+    # every transaction until the file was fixed. Nothing this tool gets wrong
+    # is worth taking the package manager down with it.
+    except Exception as e:  # noqa: BLE001
         after = f" (after creating {_listed(created)})" if created else ""
         warn(f"dnf {phase}-transaction snapshot failed{after}: {e}")
         return 0
