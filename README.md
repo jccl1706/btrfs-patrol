@@ -13,9 +13,13 @@ A btrfs snapshot manager and rollback tool for Fedora.
 > was tested from COPR: setup, dnf and timer snapshots, and a rollback and
 > roll forward with reboots. Snapshots of other subvolumes (0.3.0) were tested
 > on that VM and on the T480: a rollback of `/home` and a rollback of root,
-> each with a reboot, each leaving the other subvolume untouched. It is
-> young software on the part of your system you most need to work, so keep
-> backups.
+> each with a reboot, each leaving the other subvolume untouched. 0.4.0 was
+> tested by upgrading that VM from Fedora 44 to 45 with `dnf system-upgrade`
+> and rolling it back: the offline transaction takes its own snapshot, the
+> restored system came back on the older release with the packages the
+> upgrade had added and removed put back, and `prune-kernels` removed the
+> stranded kernel's boot entry. It is young software on the part of your
+> system you most need to work, so keep backups.
 
 btrfs-patrol is inspired by [timepatrol](https://github.com/abdeoliveira/timepatrol)
 and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
@@ -59,6 +63,7 @@ btrfs-patrol keep SELECTOR                protect snapshots from pruning
 btrfs-patrol unkeep SELECTOR              let snapshots be pruned again
 btrfs-patrol delete SELECTOR [--yes]      delete snapshots
 btrfs-patrol prune                        delete snapshots beyond the limit
+btrfs-patrol prune-kernels [--dry-run]    remove boot entries with no kernel modules
 btrfs-patrol check                        check configuration, mounts and snapshots
 btrfs-patrol rollback ID [--dry-run]      roll a subvolume back to a snapshot, then reboot
 ```
