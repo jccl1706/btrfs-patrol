@@ -18,8 +18,13 @@ A btrfs snapshot manager and rollback tool for Fedora.
 > and rolling it back: the offline transaction takes its own snapshot, the
 > restored system came back on the older release with the packages the
 > upgrade had added and removed put back, and `prune-kernels` removed the
-> stranded kernel's boot entry. It is young software on the part of your
-> system you most need to work, so keep backups.
+> stranded kernel's boot entry. 0.4.1 is a hardening release: a review of every
+> module found, and the tests now cover, a snapshot taken into an unmounted store
+> (which landed in the root subvolume and was never seen again), a rollback
+> acting on checks that had stopped being true while it waited to be confirmed,
+> an interrupted rollback that could leave no root subvolume at all, and three
+> ways the dnf hook could abort or hang a transaction. It is young software on
+> the part of your system you most need to work, so keep backups.
 
 btrfs-patrol is inspired by [timepatrol](https://github.com/abdeoliveira/timepatrol)
 and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
