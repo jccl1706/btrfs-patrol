@@ -151,6 +151,31 @@ def _rootflags(cmdline: str) -> list[str]:
     ]
 
 
+
+def _check_device(configured: str, mounted: str) -> None:
+    """Refuse a configured device that is not the one / is actually mounted from.
+
+    The only identity checks otherwise are subvolume IDs, and those are not
+    unique across filesystems: every fresh btrfs starts allocating at 256, so
+    another disk's 'root' and 'snapshots' can match. With filesystem.device set
+    by hand - the example configuration invites it - and device names having
+    moved, as NVMe names do between boots, the rollback would rename another
+    system's root subvolume into that system's store.
+    """
+    if configured == mounted:
+        return
+    try:
+        if os.stat(configured).st_rdev == os.stat(mounted).st_rdev:
+            return
+    except OSError:
+        if Path(configured).resolve() == Path(mounted).resolve():
+            return
+    raise PatrolError(
+        f"filesystem.device is {configured}, but / is mounted from {mounted}. "
+        "Point it at the filesystem this system is on, or remove it and let "
+        "btrfs-patrol read the device from the mount"
+    )
+
 def nested_subvolumes(subvolumes: Sequence[Subvolume], parent: str) -> list[str]:
     """Outermost subvolumes inside parent, as paths relative to it.
 
@@ -222,6 +247,8 @@ def _prepare_root(
     if root_mount is None or root_mount.fstype != "btrfs":
         raise PatrolError("/ is not a btrfs filesystem")
     device = config.device or root_mount.source
+    if config.device:
+        _check_device(config.device, root_mount.source)
     root_id = btrfs.subvolume_id(ROOT_MOUNT)
 
     with system.mounted_top_level(device) as top:
@@ -280,6 +307,8 @@ def _prepare_other(
 
     current_id = btrfs.subvolume_id(path)
     device = config.device or root_mount.source
+    if config.device:
+        _check_device(config.device, root_mount.source)
     with system.mounted_top_level(device) as top:
         location = top / subvolume_path
         if not location.is_dir() or btrfs.subvolume_id(location) != current_id:

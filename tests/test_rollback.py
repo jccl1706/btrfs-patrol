@@ -398,3 +398,20 @@ class PrepareOtherSubvolumeTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class DeviceCrossCheckTests(unittest.TestCase):
+    """Subvolume ids are not unique across filesystems; the device must be right."""
+
+    def test_the_same_device_passes(self):
+        rollback._check_device("/dev/vda2", "/dev/vda2")  # must not raise
+
+    def test_a_different_device_is_refused(self):
+        with self.assertRaisesRegex(PatrolError, "but / is mounted from"):
+            rollback._check_device("/dev/nvme1n1p2", "/dev/nvme0n1p2")
+
+    def test_two_paths_to_the_same_device_pass(self):
+        """/dev/mapper/vg0-root and /dev/dm-0 are the same block device."""
+        with mock.patch.object(rollback.os, "stat") as stat:
+            stat.return_value = mock.Mock(st_rdev=2049)
+            rollback._check_device("/dev/mapper/vg0-root", "/dev/dm-0")

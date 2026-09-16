@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
-import textwrap
+import unicodedata
 from collections.abc import Sequence
 from typing import TextIO
 
@@ -65,6 +65,85 @@ class Console:
         print(f"{self.err_style.red('error:')} {message}", file=self.err)
 
 
+
+def printable(text: str) -> str:
+    """Text safe to put in a table.
+
+    Descriptions are written by people and by dnf's package lists, and are
+    printed straight to a terminal. A newline splits one snapshot across two
+    lines so the listing stops being one row per snapshot; an escape sequence is
+    obeyed, not shown, so a description can clear the screen or move the cursor;
+    and a bidirectional override reorders what is displayed, which matters when
+    the text says what a rollback is about to restore. Stored text is left
+    alone - this is only how it is shown.
+    """
+    out = []
+    for character in text:
+        category = unicodedata.category(character)
+        if category == "Cc":
+            out.append(" ")  # newline, tab, escape: keep the words apart
+        elif category in ("Cf", "Co", "Cs", "Cn"):
+            continue  # zero width, bidi overrides, private use, unassigned
+        else:
+            out.append(character)
+    return "".join(out)
+
+
+def char_width(character: str) -> int:
+    """Terminal columns one character occupies: 0 combining, 2 wide, else 1."""
+    if unicodedata.combining(character):
+        return 0
+    return 2 if unicodedata.east_asian_width(character) in ("W", "F") else 1
+
+
+def display_width(text: str) -> int:
+    """Terminal columns text occupies, which is not len() for CJK or emoji."""
+    return sum(char_width(character) for character in text)
+
+
+def pad(text: str, width: int, right: bool = False) -> str:
+    """Pad to width DISPLAY columns; str.ljust counts code points instead."""
+    filler = " " * max(width - display_width(text), 0)
+    return filler + text if right else text + filler
+
+
+def truncate(text: str, limit: int) -> str:
+    """Cut to limit display columns, ending with '…', without splitting a character."""
+    if display_width(text) <= limit:
+        return text
+    kept, used = [], 0
+    for character in text:
+        width = char_width(character)
+        if used + width > limit - 1:  # room for the ellipsis
+            break
+        kept.append(character)
+        used += width
+    return "".join(kept) + "…"
+
+
+def wrap_text(text: str, limit: int) -> list[str]:
+    """Wrap on whitespace to limit display columns, breaking a long word if it must."""
+    lines: list[str] = []
+    current, used = "", 0
+    for word in text.split():
+        word_width = display_width(word)
+        if current and used + 1 + word_width > limit:
+            lines.append(current)
+            current, used = "", 0
+        while word_width > limit:  # a single word wider than the column
+            head = truncate(word, limit + 1)[:-1] or word[:1]
+            lines.append(head)
+            word = word[len(head):]
+            word_width = display_width(word)
+        if current:
+            current += " " + word
+            used += 1 + word_width
+        else:
+            current, used = word, word_width
+    if current:
+        lines.append(current)
+    return lines
+
 def format_table(
     snapshots: Sequence[Snapshot],
     style: Style,
@@ -92,15 +171,16 @@ def format_table(
         for s in snapshots
     ]
     widths = [
-        max([len(header), *(len(row[i]) for row in rows)]) for i, header in enumerate(headers)
+        max([display_width(header), *(display_width(row[i]) for row in rows)])
+        for i, header in enumerate(headers)
     ]
     indent = sum(widths) + len(GAP) * len(widths)
     description_width = max(width - indent, MIN_DESCRIPTION_WIDTH)
 
     def cells(values: Sequence[str]) -> str:
         # IDs are right-aligned so the '*' marker sits next to the number.
-        first = values[0].rjust(widths[0])
-        rest = (value.ljust(w) for value, w in zip(values[1:], widths[1:]))
+        first = pad(values[0], widths[0], right=True)
+        rest = (pad(value, w) for value, w in zip(values[1:], widths[1:]))
         return GAP.join([first, *rest]) + GAP
 
     lines = [style.bold(cells(headers) + "DESCRIPTION")]
@@ -108,13 +188,11 @@ def format_table(
         prefix = cells(row)
         if snapshot.keep:
             prefix = prefix.replace("*", style.green("*"), 1)
-        description = snapshot.description or "-"
+        description = printable(snapshot.description) or "-"
         if wrap:
-            parts = textwrap.wrap(description, description_width) or [description]
-        elif len(description) > description_width:
-            parts = [description[: description_width - 1] + "…"]
+            parts = wrap_text(description, description_width) or [description]
         else:
-            parts = [description]
+            parts = [truncate(description, description_width)]
         lines.append(prefix + parts[0])
         lines.extend(" " * indent + part for part in parts[1:])
     return "\n".join(lines)

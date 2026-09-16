@@ -6,7 +6,15 @@ from unittest import mock
 
 from support import make_snapshot
 
-from btrfs_patrol.output import Style, color_enabled, format_table
+from btrfs_patrol.output import (
+    Style,
+    color_enabled,
+    display_width,
+    format_table,
+    printable,
+    truncate,
+    wrap_text,
+)
 
 
 class FakeTerminal(io.StringIO):
@@ -70,3 +78,51 @@ class ColorEnabledTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrintableTests(unittest.TestCase):
+    """Descriptions are written by people and by dnf, and printed to a terminal."""
+
+    def test_a_newline_cannot_split_a_row(self):
+        self.assertEqual(printable("line one\nline two"), "line one line two")
+
+    def test_escape_sequences_are_not_left_executable(self):
+        rendered = printable("\033[31mRED\033[0m and \033[2J")
+        self.assertNotIn("\033", rendered, "the terminal must not obey a description")
+
+    def test_bidi_overrides_are_removed(self):
+        self.assertEqual(printable("safe\u202Egnahc"), "safegnahc")
+
+    def test_ordinary_text_is_untouched(self):
+        self.assertEqual(printable("upgrade kernel-core, mesa +2 more"),
+                         "upgrade kernel-core, mesa +2 more")
+
+
+class DisplayWidthTests(unittest.TestCase):
+    """len() is not the number of terminal columns."""
+
+    CJK = "安装 GNOME 49 之前的系统快照"
+
+    def test_wide_characters_count_two_columns(self):
+        # The point is the gap between the two, which is what len() got wrong.
+        self.assertEqual(len(self.CJK), 19)
+        self.assertEqual(display_width(self.CJK), 28)
+        self.assertGreater(display_width(self.CJK), len(self.CJK))
+
+    def test_combining_marks_count_nothing(self):
+        self.assertEqual(display_width("e\u0301"), 1)
+
+    def test_truncation_respects_columns_not_code_points(self):
+        cut = truncate(self.CJK, 12)
+        self.assertLessEqual(display_width(cut), 12)
+        self.assertTrue(cut.endswith("…"))
+
+    def test_a_table_row_fits_the_requested_width(self):
+        snapshots = [make_snapshot(1, description=self.CJK * 4)]
+        lines = format_table(snapshots, Style(False), width=80).splitlines()
+        for line in lines:
+            self.assertLessEqual(display_width(line), 80, line)
+
+    def test_wrapping_respects_columns(self):
+        for line in wrap_text(self.CJK * 3, 20):
+            self.assertLessEqual(display_width(line), 20, line)

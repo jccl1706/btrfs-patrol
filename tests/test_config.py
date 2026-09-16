@@ -129,3 +129,24 @@ class LoadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReservedAndDuplicateNameTests(unittest.TestCase):
+    """Selectors match subvolume names case-insensitively, so names must too."""
+
+    def test_the_root_name_is_reserved_whatever_its_case(self):
+        for name in ("ROOT", "Root", "rOOt"):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(PatrolError, "is the root subvolume's"):
+                    config.parse({"subvolumes": {name: {"path": "/srv"}}})
+
+    def test_two_names_differing_only_in_case_are_refused(self):
+        with self.assertRaisesRegex(PatrolError, "differs only in case"):
+            config.parse({
+                "subvolumes": {"home": {"path": "/home"}, "Home": {"path": "/srv"}}
+            })
+
+    def test_whitespace_in_the_snapshots_dir_is_refused(self):
+        """/etc/fstab separates fields with whitespace."""
+        with self.assertRaisesRegex(PatrolError, "must not contain whitespace"):
+            config.parse({"filesystem": {"snapshots_dir": "/.snap shots"}})

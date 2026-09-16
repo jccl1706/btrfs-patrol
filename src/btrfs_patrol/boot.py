@@ -139,7 +139,22 @@ def installed_kernel_versions(
 ) -> set[str]:
     """Kernel versions (as in 'uname -r') that have a boot entry of either type."""
     versions = set()
-    for path in sorted(entries_dir.glob("*.conf")):
+    # Type #1 entries live in $BOOT/loader/entries, and $BOOT is the XBOOTLDR
+    # partition when there is one, otherwise the ESP. With the ESP at /efi and no
+    # XBOOTLDR, kernel-install writes to /efi/loader/entries and nothing is under
+    # /boot at all, which used to refuse every rollback on a healthy machine.
+    entry_dirs, seen_dirs = [], set()
+    for candidate in [entries_dir, *(mount / "loader/entries" for mount in esp_mounts)]:
+        try:
+            if not candidate.is_dir():
+                continue
+            key = candidate.resolve()
+        except OSError:
+            continue
+        if key not in seen_dirs:
+            seen_dirs.add(key)
+            entry_dirs.append(candidate)
+    for path in sorted(path for directory in entry_dirs for path in directory.glob("*.conf")):
         # Unreadable or non-UTF-8 entries must not escape as a traceback: this
         # runs inside the rollback checks. errors="replace" keeps a usable
         # version line in a file with a few bad bytes; a dangling symlink or an

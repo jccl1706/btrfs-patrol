@@ -195,3 +195,42 @@ class StaleKernelTests(unittest.TestCase):
         self.entry("6.18.0-300.fc45.x86_64")
         (self.modules / "6.18.0-300.fc45.x86_64").write_text("not a directory")
         self.assertEqual(self.stale(), {"6.18.0-300.fc45.x86_64"})
+
+
+class BootPartitionLocationTests(unittest.TestCase):
+    """Type #1 entries live under $BOOT, which is not always /boot."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = Path(tmp.name)
+
+    def entry(self, directory, version):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{MACHINE_ID}-{version}.conf").write_text(
+            ENTRY.replace("6.17.1-300.fc44.x86_64", version)
+        )
+
+    def test_entries_on_an_esp_mounted_at_efi_are_found(self):
+        esp = self.base / "efi"
+        self.entry(esp / "loader/entries", "6.18.0-300.fc45.x86_64")
+        found = installed_kernel_versions(self.base / "boot/loader/entries", (esp,))
+        self.assertEqual(found, {"6.18.0-300.fc45.x86_64"})
+
+    def test_the_traditional_location_still_works(self):
+        entries = self.base / "boot/loader/entries"
+        self.entry(entries, "6.17.1-300.fc44.x86_64")
+        self.assertEqual(installed_kernel_versions(entries, ()), {"6.17.1-300.fc44.x86_64"})
+
+    def test_the_same_directory_reached_twice_is_not_counted_twice(self):
+        boot = self.base / "boot"
+        self.entry(boot / "loader/entries", "6.17.1-300.fc44.x86_64")
+        found = installed_kernel_versions(boot / "loader/entries", (boot,))
+        self.assertEqual(found, {"6.17.1-300.fc44.x86_64"})
+
+    def test_an_unreadable_entry_is_skipped_not_fatal(self):
+        entries = self.base / "boot/loader/entries"
+        entries.mkdir(parents=True)
+        (entries / "broken.conf").write_bytes(b"version \xff\xfe not-utf8\n")
+        self.entry(entries, "6.17.1-300.fc44.x86_64")
+        self.assertEqual(installed_kernel_versions(entries, ()), {"6.17.1-300.fc44.x86_64"})

@@ -165,6 +165,13 @@ def prepare(config_path: Path) -> Iterator[SetupPlan]:
             new_config_text=new_config_text,
             top=top,
             create_subvolume=not subvolume.exists(),
+            # 'btrfs subvolume create' leaves 0755, and a store created by hand,
+            # left by another tool, or by a setup interrupted between creating it
+            # and the chmod, stays world-traversable: old configs readable and
+            # old setuid binaries runnable by any local user.
+            fix_subvolume_mode=(
+                subvolume.exists() and (subvolume.stat().st_mode & 0o777) != 0o700
+            ),
             create_mount_point=snapshots_mount is None and not snapshots_dir.exists(),
             fstab_line=fstab_line,
             mount=snapshots_mount is None,
@@ -192,6 +199,8 @@ class SetupPlan:
     """Add the snapshots directory to SELinux's fixfiles_exclude_dirs."""
     label_store: bool = False
     """Give the store's own files their SELinux labels."""
+    fix_subvolume_mode: bool = False
+    """The store subvolume exists but is not 0700, so anyone can walk into it."""
 
     def actions(self) -> list[str]:
         config = self.config
@@ -201,6 +210,11 @@ class SetupPlan:
         if self.create_subvolume:
             actions.append(
                 f"create the top-level subvolume {config.snapshots_subvolume!r}, "
+                "readable only by root"
+            )
+        if self.fix_subvolume_mode:
+            actions.append(
+                f"make the top-level subvolume {config.snapshots_subvolume!r} "
                 "readable only by root"
             )
         if self.create_mount_point:
@@ -229,9 +243,10 @@ class SetupPlan:
         if self.new_config_text is not None:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             system.write_atomic(self.config_path, self.new_config_text, mode=0o644)
-        if self.create_subvolume:
+        if self.create_subvolume or self.fix_subvolume_mode:
             subvolume = self.top / config.snapshots_subvolume
-            btrfs.create_subvolume(subvolume)
+            if self.create_subvolume:
+                btrfs.create_subvolume(subvolume)
             subvolume.chmod(0o700)
         if self.create_mount_point:
             config.snapshots_dir.mkdir(mode=0o755)

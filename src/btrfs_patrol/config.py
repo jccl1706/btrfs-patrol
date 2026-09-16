@@ -206,16 +206,33 @@ def _validate(config: Config) -> None:
         raise PatrolError("filesystem.snapshots_subvolume must not be inside the root subvolume")
     if not config.snapshots_dir.is_absolute():
         raise PatrolError("filesystem.snapshots_dir must be an absolute path")
+    if any(character.isspace() for character in str(config.snapshots_dir)):
+        # /etc/fstab separates its fields with whitespace, and setup writes the
+        # mount point there unescaped. A path with a space in it produces a line
+        # that means something else entirely, and that setup can never match
+        # again, so every run appends another copy.
+        raise PatrolError("filesystem.snapshots_dir must not contain whitespace")
     if config.max_snapshots < 1:
         raise PatrolError("retention.max_snapshots must be at least 1")
     if config.color not in COLOR_CHOICES:
         raise PatrolError(f"output.color must be one of: {', '.join(COLOR_CHOICES)}")
 
     paths: dict[Path, str] = {}
+    names: dict[str, str] = {}
     for subvolume in config.subvolumes:
         where = f"{SUBVOLUMES_SECTION}.{subvolume.name}"
-        if subvolume.name == ROOT:
+        # Case-insensitively, because 'subvolume=' matching is case-insensitive:
+        # [subvolumes.ROOT] used to be accepted, and then 'delete subvolume=root'
+        # selected its snapshots along with the real root's.
+        if subvolume.name.casefold() == ROOT:
             raise PatrolError(f"[{where}]: the name {ROOT!r} is the root subvolume's")
+        folded = subvolume.name.casefold()
+        if folded in names:
+            raise PatrolError(
+                f"[{where}]: {names[folded]!r} differs only in case, and a selector "
+                "could not tell them apart"
+            )
+        names[folded] = subvolume.name
         if not _SUBVOLUME_NAME.fullmatch(subvolume.name):
             raise PatrolError(
                 f"[{where}]: a subvolume's name is letters, digits, '_', '.' and '-', "

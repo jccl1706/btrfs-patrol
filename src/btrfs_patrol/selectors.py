@@ -63,6 +63,10 @@ def select(selector: str, snapshots: Sequence[Snapshot]) -> list[Snapshot]:
 def _select_by_field(selector: str, snapshots: Sequence[Snapshot]) -> list[Snapshot]:
     field, _, value = selector.partition("=")
     field = field.strip()
+    # The value too: "kind = timer" is the natural way to type this, and shells
+    # do not discourage it. Unstripped, it matched nothing and said nothing,
+    # while "keep = yes" complained that yes was not 'yes' or 'no'.
+    value = value.strip()
     if field == "keep":
         if value not in ("yes", "no"):
             raise PatrolError("keep= must be followed by 'yes' or 'no'")

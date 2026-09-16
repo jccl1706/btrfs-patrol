@@ -79,3 +79,22 @@ class FieldSelectorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpacedSelectorTests(unittest.TestCase):
+    """Spaces around '=' are how people type this."""
+
+    def setUp(self):
+        self.snapshots = [
+            make_snapshot(1, kind="timer", keep=True),
+            make_snapshot(2, kind="manual"),
+        ]
+
+    def test_spaces_around_a_value(self):
+        self.assertEqual([s.id for s in select("kind = timer", self.snapshots)], [1])
+
+    def test_spaces_around_keep(self):
+        self.assertEqual([s.id for s in select("keep = yes", self.snapshots)], [1])
+
+    def test_spaces_around_a_subvolume(self):
+        self.assertEqual([s.id for s in select("subvolume = root", self.snapshots)], [1, 2])
