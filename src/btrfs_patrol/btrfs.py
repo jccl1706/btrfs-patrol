@@ -64,6 +64,16 @@ def is_subvolume(path: Path) -> bool:
     return path.stat().st_ino == SUBVOLUME_ROOT_INODE
 
 
+def is_read_only(path: Path) -> bool:
+    """Whether a subvolume's read-only property is set.
+
+    Not the same as the mount being read-only: a read-only snapshot mounted at /
+    still reports 'rw' in the mount options, and btrfs refuses the writes anyway.
+    """
+    output = run("property", "get", "-t", "subvol", path, "ro").strip()
+    return output.rpartition("=")[2].strip().lower() == "true"
+
+
 def subvolume_id(path: Path) -> int:
     """ID of the subvolume that contains path."""
     output = run("inspect-internal", "rootid", path).strip()

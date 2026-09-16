@@ -90,6 +90,17 @@ def selected_subvolumes(
     return chosen
 
 
+def mounted_snapshots(config: Config, subvolumes: Sequence[ManagedSubvolume]) -> dict[str, int]:
+    """Name -> snapshot ID, for the subvolumes currently mounted from a snapshot."""
+    mounts = system.read_mounts()
+    found = {}
+    for subvolume in subvolumes:
+        snapshot_id = rollback.mounted_snapshot(config, system.find_mount(subvolume.path, mounts))
+        if snapshot_id is not None:
+            found[subvolume.name] = snapshot_id
+    return found
+
+
 def pending_rollbacks(config: Config, subvolumes: Sequence[ManagedSubvolume]) -> dict[str, int]:
     """Name -> snapshot ID, for the subvolumes whose rollback is waiting for a reboot."""
     mounts = system.read_mounts()
@@ -169,16 +180,18 @@ def cmd_keep(app: App, args: argparse.Namespace) -> int:
 
 def cmd_delete(app: App, args: argparse.Namespace) -> int:
     snapshots = app.matching(args.selector)
-    # After a rollback the subvolume is mounted FROM its snapshot until the
-    # reboot, and the rollback message names that snapshot - so deleting it is
-    # an easy thing to try. It would aim 'btrfs subvolume delete' at the running
-    # system's own subvolume.
-    in_use = set(pending_rollbacks(app.config, list(app.config.managed())).values())
+    # A subvolume can be mounted from a snapshot for two reasons: a rollback is
+    # waiting for its reboot, or the snapshot's own boot entry was booted to
+    # repair a broken system. Deleting it is an easy thing to try in both cases
+    # - the rollback message names the snapshot, and the boot menu names it -
+    # and in both it aims 'btrfs subvolume delete' at the running system. Asking
+    # "is it mounted" rather than "is a rollback pending" covers both.
+    in_use = set(mounted_snapshots(app.config, list(app.config.managed())).values())
     blocked = sorted(s.id for s in snapshots if s.id in in_use)
     if blocked:
         raise PatrolError(
-            f"snapshot {', '.join(map(str, blocked))} is what the system is running from "
-            "after a rollback; reboot first, then delete it"
+            f"snapshot {', '.join(map(str, blocked))} is what the system is running from; "
+            "reboot into the normal system first, then delete it"
         )
     require_confirmation_possible(args.yes)
     app.print(app.table(snapshots))

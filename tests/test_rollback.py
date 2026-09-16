@@ -415,3 +415,51 @@ class DeviceCrossCheckTests(unittest.TestCase):
         with mock.patch.object(rollback.os, "stat") as stat:
             stat.return_value = mock.Mock(st_rdev=2049)
             rollback._check_device("/dev/mapper/vg0-root", "/dev/dm-0")
+
+
+class BootedSnapshotTests(unittest.TestCase):
+    """Booting a snapshot's boot entry must not look like a pending rollback."""
+
+    def setUp(self):
+        self.config = config_mod.parse({"filesystem": {"snapshots_dir": "/.snapshots"}})
+        self.mount = Mount("/snapshots/25/snapshot", "/", "btrfs", "/dev/vda2")
+
+    def pending(self):
+        return rollback.pending_rollback(self.config, self.mount)
+
+    def test_a_writable_source_is_a_pending_rollback(self):
+        """A rollback moves the live subvolume into the store, so it is writable."""
+        with mock.patch.object(btrfs, "is_read_only", return_value=False):
+            self.assertEqual(self.pending(), 25)
+
+    def test_a_read_only_source_is_a_booted_snapshot(self):
+        """A boot entry mounts a read-only snapshot at the same kind of path."""
+        with mock.patch.object(btrfs, "is_read_only", return_value=True):
+            self.assertIsNone(self.pending())
+
+    def test_an_unreadable_property_keeps_the_cautious_answer(self):
+        with mock.patch.object(btrfs, "is_read_only", side_effect=PatrolError("no btrfs")):
+            self.assertEqual(self.pending(), 25)
+
+    def test_a_mount_that_is_not_a_snapshot_is_still_nothing(self):
+        self.mount = Mount("/root", "/", "btrfs", "/dev/vda2")
+        with mock.patch.object(btrfs, "is_read_only", return_value=False) as ro:
+            self.assertIsNone(self.pending())
+            ro.assert_not_called()
+
+
+class ReadOnlyPropertyTests(unittest.TestCase):
+    """btrfs property output is 'ro=true' / 'ro=false'."""
+
+    def parse(self, output):
+        with mock.patch.object(btrfs, "run", return_value=output):
+            return btrfs.is_read_only(Path("/.snapshots/1/snapshot"))
+
+    def test_true(self):
+        self.assertTrue(self.parse("ro=true\n"))
+
+    def test_false(self):
+        self.assertFalse(self.parse("ro=false\n"))
+
+    def test_unexpected_output_is_not_read_only(self):
+        self.assertFalse(self.parse(""))

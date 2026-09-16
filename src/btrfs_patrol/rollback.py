@@ -112,12 +112,13 @@ def fstab_method(mount_point: Path, subvolume_path: str, fstab: str) -> str:
     return f"subvol={subvolume_path} in {FSTAB}"
 
 
-def pending_rollback(config: Config, mount: system.Mount | None) -> int | None:
-    """The ID of the snapshot a mount still is while a rollback waits for a reboot, else None.
+def mounted_snapshot(config: Config, mount: system.Mount | None) -> int | None:
+    """The ID of the snapshot a mount comes from, whatever put it there.
 
-    A rollback moves the mounted subvolume into the snapshot store, and the
-    mount table follows it: until the reboot, the mount is from
-    "/<snapshots_subvolume>/<id>/snapshot" instead of its usual subvolume.
+    Two different situations look like this, and only one of them is a pending
+    rollback - see pending_rollback. Both mean the same thing for deletion,
+    though: this subvolume is in use by the running system, and deleting it
+    takes the running system with it.
     """
     if mount is None or mount.fstype != "btrfs":
         return None
@@ -127,6 +128,30 @@ def pending_rollback(config: Config, mount: system.Mount | None) -> int | None:
         return None
     middle = mount.root[len(prefix) : -len(suffix)]
     return int(middle) if middle.isascii() and middle.isdigit() else None
+
+
+def pending_rollback(config: Config, mount: system.Mount | None) -> int | None:
+    """The ID of the snapshot a mount still is while a rollback waits for a reboot, else None.
+
+    A rollback moves the mounted subvolume into the snapshot store, and the
+    mount table follows it: until the reboot, the mount is from
+    "/<snapshots_subvolume>/<id>/snapshot" instead of its usual subvolume.
+    """
+    snapshot_id = mounted_snapshot(config, mount)
+    if snapshot_id is None:
+        return None
+    # Booting a snapshot's own boot entry puts the system on exactly this kind of
+    # path, so the path alone cannot tell the two apart. What can: a rollback
+    # moves the LIVE subvolume into the store, so the system is running from a
+    # WRITABLE one, while a boot entry always mounts a read-only snapshot.
+    # Without this, booting a snapshot to repair a system reports a rollback
+    # nobody asked for, and makes 'snapshot' skip and 'delete' refuse.
+    try:
+        if btrfs.is_read_only(config.snapshots_dir / str(snapshot_id) / SUBVOLUME_NAME):
+            return None
+    except (PatrolError, OSError):
+        pass  # Can't tell: keep the cautious answer, which is "pending".
+    return snapshot_id
 
 
 def pending_rollback_message(snapshot_id: int, path: Path = ROOT_MOUNT) -> str:

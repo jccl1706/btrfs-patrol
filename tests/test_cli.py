@@ -10,7 +10,7 @@ from unittest import mock
 
 from support import make_snapshot
 
-from btrfs_patrol import boot, btrfs, selinux, system
+from btrfs_patrol import boot, btrfs, rollback, selinux, system
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.cli import (
     App,
@@ -123,6 +123,32 @@ class CliTests(unittest.TestCase):
             with self.assertRaisesRegex(PatrolError, "running from"):
                 cmd_delete(self.app(io.StringIO()), args)
         self.assertIn(8, self.store.ids(), "it must still be there")
+
+    def test_delete_refuses_a_snapshot_we_booted_into(self):
+        """Not a pending rollback - the snapshot's own boot entry was booted.
+
+        pending_rollback correctly returns None here, because the snapshot is
+        read-only. Deleting it still destroys the running system, which is why
+        the guard asks whether it is mounted rather than whether a rollback is
+        pending.
+        """
+        self.store.path(8).mkdir()
+        self.store.save(make_snapshot(8))
+        self.store.subvolume(8).mkdir()
+        args = build_parser().parse_args(["delete", "8", "--yes"])
+        with mock.patch.object(system, "read_mounts", return_value=self.pending_mounts()):
+            with mock.patch.object(btrfs, "is_read_only", return_value=True):
+                # pending_rollback says "not pending"...
+                self.assertIsNone(
+                    rollback.pending_rollback(
+                        self.app(io.StringIO()).config,
+                        system.find_mount(Path("/"), self.pending_mounts()),
+                    )
+                )
+                # ...and delete refuses anyway.
+                with self.assertRaisesRegex(PatrolError, "running from"):
+                    cmd_delete(self.app(io.StringIO()), args)
+        self.assertIn(8, self.store.ids(), "the running system's subvolume must survive")
 
     def test_check_during_a_pending_rollback_warns_but_passes(self):
         for snapshot_id in self.store.ids():
