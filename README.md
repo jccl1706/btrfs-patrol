@@ -51,6 +51,8 @@ and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
   entry count: `/boot/loader/entries` files and unified kernel images.
 - **Other subvolumes too**: `/home`, or any other subvolume, can get snapshots
   of its own and be rolled back on its own.
+- **Boots a snapshot** from the boot menu, so a system that no longer starts can
+  be rolled back without a live USB.
 - **No dependencies** beyond Python 3.11+, `btrfs-progs` and `util-linux`.
 
 ## Install
@@ -176,6 +178,51 @@ subvolume (Fedora's installer) or by name with `subvol=`. It refuses setups
 that mount the root by subvolume ID (`subvolid=`), which can't follow a
 rollback. If any step fails, the steps already done are undone.
 
+## Booting a snapshot
+
+A rollback needs a system you can still log in to. When there isn't one - after
+`rm -rf /etc`, or an update that leaves the machine at an emergency shell -
+btrfs-patrol can put snapshots in the boot menu, so you can boot one and roll
+back from there without a live USB.
+
+It is off by default, because the boot menu is shared with the rest of the
+system:
+
+```toml
+[boot]
+entries = 3
+```
+
+The newest snapshots then get an entry each, written when a snapshot is taken
+and removed when one is deleted or pruned. They are Boot Loader Specification
+Type #1 entries, which systemd-boot reads directly. Fedora's GRUB reads the same
+files through `blscfg`, so one entry should serve both - but only systemd-boot
+has been tested so far, on two machines. They work on a system whose
+kernels are unified kernel images too: the kernel and initrd that go into the
+image are still on the boot partition, which is what an entry needs.
+
+Booting one gives you:
+
+- The snapshot, **read-only**. Nothing done in that session is kept, and the
+  snapshot itself cannot be altered by it.
+- `/home`, and any other subvolume mounted on its own, writable as usual.
+- `btrfs-patrol rollback ID`, which restores the root subvolume - the one that
+  is *not* running, so nothing is using it - after which a normal reboot starts
+  the restored system.
+
+Units that write to `/` fail in such a session. That is what read-only means,
+not a fault.
+
+The kernel command line is taken from the running one rather than built, so
+everything needed to reach the disk - `rd.luks.uuid`, `rd.lvm.lv`, `root=UUID` -
+is carried over. Four things are dropped, each because it breaks such a boot or
+does not belong in a Type #1 entry: `resume=`, `initrd=`, `systemd.machine_id=`
+and `systemd.volatile=`.
+
+Only entries btrfs-patrol wrote are ever changed or removed - `kernel-install`
+owns that directory too - and a snapshot whose kernel is no longer on the boot
+partition is skipped rather than offered as something it is not.
+
 ## Other subvolumes
 
 Besides the root subvolume, btrfs-patrol can take snapshots of other
@@ -219,6 +266,7 @@ real reboots, on hardware and in VMs.
 | 0.2.0 | The T480 again (systemd-boot entries, SELinux enforcing), upgraded from 0.1.1, and unified kernel image support on a VM booting one. |
 | 0.3.0 | A fresh Fedora 44 Workstation install with the default layout and GRUB, from COPR: setup, dnf and timer snapshots, rollback and roll forward with reboots. Snapshots of other subvolumes on that VM and the T480: `/home` and root rolled back separately, each leaving the other untouched. |
 | 0.4.0 | A Fedora 44 to 45 upgrade with `dnf system-upgrade`, rolled back: the offline transaction takes its own snapshot, the restored system came back on the older release with the packages the upgrade added and removed put back, and `prune-kernels` removed the stranded kernel's boot entry. |
+| after 0.4.1 | Snapshot boot entries, on two different layouts: a VM whose kernels are unified kernel images and no encryption, and the T480 with LUKS, LVM and Type #1 entries. Booted a generated entry on both, read-only with the desktop up, and rolled the system back from inside one. |
 | 0.4.1 | A review of every module. The tests now cover a snapshot taken into an unmounted store, a rollback acting on checks that had stopped being true while it waited to be confirmed, an interrupted rollback that could leave no root subvolume, and three ways the dnf hook could abort or hang a transaction. 162 tests to 212. |
 
 ## Development
@@ -264,12 +312,7 @@ tests/                          unittest suite (test_man.py keeps the manual in 
 
 1. A command that turns an existing directory, such as `/var/log`, into a
    subvolume safely, so it can be snapshotted and rolled back on its own.
-2. Boot menu entries for snapshots, for systemd-boot and GRUB, so a system
-   too broken to log in to (after `rm -rf /etc`, say) can boot a snapshot and
-   be rolled back from there, without a live USB. The entries would boot a
-   snapshot read-only, with a kernel it has modules for, and be kept in step
-   as snapshots are taken, pruned and deleted.
-3. A terminal user interface (TUI): browse snapshots of every subvolume, see
+2. A terminal user interface (TUI): browse snapshots of every subvolume, see
    what changed between two of them, take, keep, describe and delete
    snapshots, and step through a rollback with its checks and plan on screen
    before confirming. Built on Python's own curses module, so btrfs-patrol
