@@ -261,28 +261,44 @@ def _prepare_root(
             f"choose {kernel} in the boot menu when you reboot, then remove the "
             "other entries with 'btrfs-patrol prune-kernels'"
         )
+    root_mount = system.find_mount(ROOT_MOUNT, system.read_mounts())
+    if root_mount is None or root_mount.fstype != "btrfs":
+        raise PatrolError("/ is not a btrfs filesystem")
+
+    # Booted from a snapshot's own boot entry, to repair a system that no longer
+    # boots. The root subvolume is then not mounted at all, which makes this the
+    # safer rollback: nothing is using what we are about to move aside.
+    booted_from = mounted_snapshot(config, root_mount)
+    rescue = booted_from is not None and pending_rollback(config, root_mount) is None
+
     fstab = snapshot_root / "etc/fstab"
     boots_by = boot_method(
         config.root_subvolume,
         fstab.read_text() if fstab.is_file() else "",
-        PROC_CMDLINE.read_text(),
+        # In rescue the command line describes THIS boot - it names the snapshot
+        # we booted - and says nothing about how the restored system will be
+        # found. Only the restored system's own fstab can say that.
+        "" if rescue else PROC_CMDLINE.read_text(),
     )
 
-    root_mount = system.find_mount(ROOT_MOUNT, system.read_mounts())
-    if root_mount is None or root_mount.fstype != "btrfs":
-        raise PatrolError("/ is not a btrfs filesystem")
     device = config.device or root_mount.source
     if config.device:
         _check_device(config.device, root_mount.source)
-    root_id = btrfs.subvolume_id(ROOT_MOUNT)
 
     with system.mounted_top_level(device) as top:
         root = top / config.root_subvolume
-        if not root.is_dir() or btrfs.subvolume_id(root) != root_id:
-            raise PatrolError(
-                f"{config.root_subvolume!r} on {device} is not the subvolume mounted at /; "
-                "if you already rolled back, reboot first"
-            )
+        if not root.is_dir():
+            raise PatrolError(f"{config.root_subvolume!r} does not exist on {device}")
+        if rescue:
+            # What gets moved aside is the root subvolume, not what / is on.
+            root_id = btrfs.subvolume_id(root)
+        else:
+            root_id = btrfs.subvolume_id(ROOT_MOUNT)
+            if btrfs.subvolume_id(root) != root_id:
+                raise PatrolError(
+                    f"{config.root_subvolume!r} on {device} is not the subvolume mounted at /; "
+                    "if you already rolled back, reboot first"
+                )
         _check_snapshots_subvolume(config, top, device)
         if boots_by == DEFAULT_SUBVOLUME and btrfs.get_default_subvolume_id(top) != root_id:
             raise PatrolError(

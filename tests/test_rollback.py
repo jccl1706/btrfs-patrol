@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+import contextlib
 import platform
 import shutil
 import tempfile
@@ -335,6 +336,69 @@ class PrepareTests(unittest.TestCase):
         with mock.patch.object(boot, "installed_kernel_versions", return_value={"0.0.1-other"}):
             with self.assertRaisesRegex(PatrolError, "has no boot entry"):
                 self.prepare()
+
+
+class RescuePrepareTests(unittest.TestCase):
+    """Rolling back while booted from a snapshot's own boot entry."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        snapshots = base / "snapshots"
+        snapshots.mkdir()
+        self.store = SnapshotStore(snapshots)
+        self.target = make_snapshot(1)
+        self.store.path(1).mkdir()
+        self.store.save(self.target)
+        modules = self.store.subvolume(1) / "usr/lib/modules"
+        modules.mkdir(parents=True)
+        (modules / platform.release()).mkdir()
+        (self.store.subvolume(1) / "etc").mkdir()
+        (self.store.subvolume(1) / "etc/fstab").write_text(
+            "UUID=x  /  btrfs  noatime  0 0\n"
+        )
+        self.config = config_mod.parse({"filesystem": {"snapshots_dir": str(snapshots)}})
+        # A top level with the root subvolume present but NOT mounted.
+        self.top = base / "top"
+        (self.top / "root").mkdir(parents=True)
+        (self.top / "snapshots").mkdir()
+        # The command line of the rescue boot names the snapshot, not 'root'.
+        self.cmdline = base / "cmdline"
+        self.cmdline.write_text(
+            "root=UUID=x ro rootflags=subvol=snapshots/1/snapshot\n"
+        )
+
+    @contextlib.contextmanager
+    def fake_top(self, device):
+        yield self.top
+
+    def prepare(self, read_only):
+        mounts = [Mount("/snapshots/1/snapshot", "/", "btrfs", "/dev/vda2")]
+        with contextlib.ExitStack() as stack:
+            e = stack.enter_context
+            e(mock.patch.object(rollback, "PROC_CMDLINE", self.cmdline))
+            e(mock.patch.object(system, "read_mounts", return_value=mounts))
+            e(mock.patch.object(system, "mounted_top_level", self.fake_top))
+            e(mock.patch.object(boot, "installed_kernel_versions",
+                                return_value={platform.release()}))
+            e(mock.patch.object(btrfs, "is_read_only", return_value=read_only))
+            e(mock.patch.object(btrfs, "subvolume_id", return_value=332))
+            e(mock.patch.object(btrfs, "get_default_subvolume_id", return_value=332))
+            e(mock.patch.object(btrfs, "list_subvolumes", return_value=[]))
+            with rollback.prepare(self.config, self.store, self.target) as plan:
+                return plan
+
+    def test_the_rescue_command_line_does_not_refuse_the_rollback(self):
+        """The cmdline names the snapshot we booted, not how the restored system boots."""
+        plan = self.prepare(read_only=True)
+        self.assertEqual(plan.found_by, DEFAULT_SUBVOLUME)
+        self.assertEqual(plan.current_id, 332, "the root subvolume is what moves aside")
+
+    def test_a_writable_source_is_still_a_pending_rollback_and_is_refused(self):
+        """Same mount, writable: a rollback already happened and awaits its reboot."""
+        with self.assertRaisesRegex(PatrolError, "not the configured root subvolume"):
+            self.prepare(read_only=False)
 
 
 class PrepareOtherSubvolumeTests(unittest.TestCase):
