@@ -387,6 +387,7 @@ data/
   systemd/                      daily snapshot service and timer
 man/btrfs-patrol.8              manual page
 packaging/btrfs-patrol.spec     RPM spec for Fedora / COPR
+packaging/RELEASE.md            how a release is cut: version, tag, COPR, GitHub
 tests/                          unittest suite (test_man.py keeps the manual in step)
   check-convert.sh              end-to-end check for convert; needs root and a btrfs /
 ```
