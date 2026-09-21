@@ -337,6 +337,20 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONPATH=src python3 -m btrfs_patrol --help
 ```
 
+`tests/check-convert.sh` is the exception, and needs both. `convert` creates a
+subvolume, reflinks a directory's contents into it and swaps the two - none of
+which a unit test can reach - so that part is checked end to end against a real
+btrfs root instead of not at all:
+
+```sh
+sudo tests/check-convert.sh              # or TARGET=/var/tmp/x, LOG=/tmp/out.log
+```
+
+It creates its own directory, checks the contents, permissions, symlinks, hidden
+files, SELinux context, that the copy really was reflinked and that a process
+holding the directory open is reported, then removes everything it made whether
+the checks passed or not. Its exit status is the number of failures.
+
 To try read-only commands without root, point `BTRFS_PATROL_CONFIG` (or
 `--config`) at a configuration whose `snapshots_dir` is a scratch directory.
 
@@ -364,6 +378,7 @@ data/
 man/btrfs-patrol.8              manual page
 packaging/btrfs-patrol.spec     RPM spec for Fedora / COPR
 tests/                          unittest suite (test_man.py keeps the manual in step)
+  check-convert.sh              end-to-end check for convert; needs root and a btrfs /
 ```
 
 ## Roadmap
