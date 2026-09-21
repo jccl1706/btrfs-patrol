@@ -336,6 +336,49 @@ Do not ask for confirmation.
 .RE
 .
 .TP
+.B tui
+Browse and manage snapshots in a full\-screen interface. The snapshot list of
+every configured subvolume, the detail of the highlighted one, and the keys to
+take, keep, describe and delete snapshots.
+.RS
+.PP
+Keys: arrows,
+.BR PgUp / PgDn ,
+.BR Home / End
+move;
+.B Tab
+changes subvolume;
+.B Enter
+shows one snapshot in full;
+.B n
+takes a snapshot of the subvolume being shown;
+.B d
+changes a description;
+.B k
+keeps or unkeeps;
+.B x
+deletes, after confirming;
+.B /
+filters with a selector, as
+.B list
+takes;
+.B r
+reloads;
+.B ?
+lists the keys;
+.B q
+quits.
+.PP
+It enforces the same rules the commands do: a snapshot is not taken while a
+rollback is waiting for its reboot or while the snapshots subvolume is not
+mounted, and the snapshot the system is currently running from is not deleted.
+.PP
+Rolling back and comparing two snapshots are not in it yet; use
+.B rollback
+for the first.
+.RE
+.
+.TP
 .B check
 Compare the configuration with what is mounted, and look for broken
 snapshots: a root that is not btrfs or is not the configured root subvolume,

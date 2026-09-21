@@ -28,7 +28,14 @@ from enum import Enum
 
 from .config import Config, ROOT
 from .errors import PatrolError
-from .output import MIN_DESCRIPTION_WIDTH, display_width, layout, printable, truncate
+from .output import (
+    MIN_DESCRIPTION_WIDTH,
+    display_width,
+    layout,
+    printable,
+    truncate,
+    wrap_text,
+)
 from .selectors import select
 from .snapshots import Snapshot
 
@@ -56,6 +63,9 @@ class Mode(Enum):
 
     HELP = "help"
     """The key list is covering the screen."""
+
+    DETAIL = "detail"
+    """One snapshot's full detail is covering the screen."""
 
 
 @dataclass(frozen=True)
@@ -281,6 +291,8 @@ class Screen:
         """Every line of the screen, in order, padded to nothing wider than `width`."""
         if self.mode is Mode.HELP:
             return self._fit(self.help_lines())
+        if self.mode is Mode.DETAIL:
+            return self._fit(self.detail_page())
         lines = [self.title_line(), self.rule()]
         lines.extend(self.table_lines())
         lines.append(self.rule())
@@ -409,6 +421,38 @@ class Screen:
     @staticmethod
     def _join_keys(keys: Sequence[tuple[str, str]]) -> str:
         return "   ".join(f"{key} {what}" for key, what in keys)
+
+    def detail_page(self) -> list[str]:
+        """Everything known about the highlighted snapshot, nothing abbreviated.
+
+        The place where the description is not truncated and the path is spelled
+        out - the table cannot afford either, and both are what you want before
+        deciding to delete something.
+        """
+        snapshot = self.current
+        if snapshot is None:
+            return ["no snapshot selected", "", "  any key to go back"]
+        rows = [
+            ("id", str(snapshot.id)),
+            ("subvolume", snapshot.subvolume),
+            ("taken", snapshot.created.strftime("%Y-%m-%d %H:%M:%S")),
+            ("kernel", snapshot.kernel),
+            ("kind", snapshot.kind),
+            ("kept", "yes, never pruned automatically" if snapshot.keep else "no"),
+        ]
+        width = max(len(name) for name, _ in rows)
+        lines = [f"snapshot {snapshot.id}", ""]
+        lines.extend(f"  {name.ljust(width)}  {value}" for name, value in rows)
+        lines.append("")
+        lines.append("  description")
+        description = printable(snapshot.description)
+        if description:
+            lines.extend(f"    {part}" for part in wrap_text(description, max(self.width - 4, 20)))
+        else:
+            lines.append("    (none)")
+        lines.append("")
+        lines.append("  any key to go back")
+        return lines
 
     def help_lines(self) -> list[str]:
         sep = self.glyphs.separator

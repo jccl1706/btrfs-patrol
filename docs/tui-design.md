@@ -5,7 +5,7 @@ A terminal interface for browsing and managing snapshots, on Python's own
 `curses` so btrfs-patrol still needs nothing beyond Python, `btrfs-progs` and
 `util-linux`.
 
-Status: `screen.py` built and tested; `tui.py` next.
+Status: built. Browsing and managing work; rollback and diff are still to come.
 
 ## What the first version does
 
@@ -197,5 +197,13 @@ would.
   are all reachable this way.
 - Actions are tested against a real `SnapshotStore` in a temporary directory, as
   the existing snapshot tests already do.
-- `tui.py` gets a smoke test only, and stays small enough for that to be
-  honest.
+- `tui.py` splits into `Controller`, which decides and acts and is covered by
+  ordinary tests, and `run()`/`_loop()`, which talk to curses. The second is
+  small enough that a smoke test is honest coverage of it: `test_tui_pty.py`
+  gives it a real pseudo-terminal and types at it.
+
+  **Arrow keys must be sent in application mode** in such a test — `\x1bOB`,
+  not `\x1b[B`. curses emits terminfo's `smkx` on startup, which switches the
+  terminal into application cursor-key mode, so Down becomes ESC O B. The
+  normal-mode sequence arrives as three separate key presses (27, 91, 66), the
+  cursor does not move, and it looks exactly like a bug in the program.

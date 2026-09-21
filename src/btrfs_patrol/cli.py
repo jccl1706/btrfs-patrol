@@ -451,6 +451,16 @@ def cmd_convert(app: App, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tui(app: App, args: argparse.Namespace) -> int:
+    # IMPORTED HERE, NOT AT THE TOP. tui imports this module for the checks it
+    # must not reimplement - what may be deleted, when a snapshot may be taken -
+    # so importing it up there would be a cycle. Doing it at the point of use
+    # also keeps curses and the view model out of 'btrfs-patrol list'.
+    from btrfs_patrol import tui
+
+    return tui.run(app)
+
+
 def cmd_check(app: App, args: argparse.Namespace) -> int:
     """Compare the configuration with what is mounted, and look for broken snapshots."""
     config = app.config
@@ -670,6 +680,8 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
     command.add_argument("-n", "--dry-run", action="store_true",
                          help="run every check and show the plan, without changing anything")
+
+    add("tui", cmd_tui, "browse and manage snapshots in a full-screen interface", True)
 
     add("check", cmd_check, "check the configuration, mounts and snapshots")
 

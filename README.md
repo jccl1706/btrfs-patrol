@@ -87,6 +87,7 @@ btrfs-patrol delete SELECTOR [--yes]      delete snapshots
 btrfs-patrol prune                        delete snapshots beyond the limit
 btrfs-patrol prune-kernels [--dry-run]    remove boot entries with no kernel modules
 btrfs-patrol check                        check configuration, mounts and snapshots
+btrfs-patrol tui                          browse and manage snapshots full-screen
 btrfs-patrol convert PATH [--dry-run]     turn a directory into a subvolume it can snapshot
 btrfs-patrol rollback ID [--dry-run]      roll a subvolume back to a snapshot, then reboot
 ```
@@ -370,6 +371,7 @@ To try read-only commands without root, point `BTRFS_PATROL_CONFIG` (or
 pyproject.toml                  package metadata
 src/btrfs_patrol/
   cli.py                        argument parsing and commands
+  tui.py · screen.py            the full-screen interface, and its view model
   config.py                     configuration loading and validation
   config.toml.example           the commented default configuration
   setup.py                      setup's checks and steps
