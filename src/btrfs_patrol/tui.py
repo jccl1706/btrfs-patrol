@@ -347,8 +347,14 @@ def _loop(window: "curses._CursesWindow", controller: Controller) -> None:
 def _paint(window: "curses._CursesWindow", screen: Screen) -> None:
     window.erase()
     height, width = window.getmaxyx()
-    for row, line in enumerate(screen.render()[:height]):
-        # The bottom-right cell cannot be written without scrolling the window,
-        # which curses treats as an error; one column short costs nothing.
-        window.addnstr(row, 0, line, max(width - 1, 0))
+    lines = screen.render()[:height]
+    for row, line in enumerate(lines):
+        # ONLY THE LAST ROW GIVES UP ITS LAST COLUMN. Writing the very bottom
+        # right cell advances the cursor off the window, which curses reports as
+        # an error; every other row can use the full width. Doing it to all of
+        # them - which this did at first - takes a column off every line, and it
+        # shows: the title read "subvolume: all subvolume" and the rules came up
+        # one short of the screen.
+        limit = width - 1 if row == height - 1 else width
+        window.addnstr(row, 0, line, max(limit, 0))
     window.refresh()
