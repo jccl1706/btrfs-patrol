@@ -430,15 +430,20 @@ def cmd_convert(app: App, args: argparse.Namespace) -> int:
         )
         for holder in still:
             app.print(f"  {holder.describe()}")
-        hint = convert.restart_hint(still)
+        hint, reboot_only = convert.restart_plan(still)
         if hint:
             app.console.info(f"reopen them with: {hint}")
+        for unit in reboot_only:
+            # Named on their own line rather than folded into the restart
+            # command: putting them there makes the WHOLE command fail, so
+            # nothing reopens. See convert.refuses_manual_restart.
+            app.console.info(f"{unit} refuses a manual restart; only a reboot reopens it")
+        if hint and not reboot_only:
             app.console.info("or reboot, which reopens everything")
-        else:
-            # Nothing holding it is a service, so there is no restart line to
-            # offer - and "or reboot" on its own reads as the alternative to
-            # something that was never said.
+        elif not hint and not reboot_only:
             app.console.info("restart them, or reboot, to make them reopen it")
+        else:
+            app.console.info("a reboot reopens everything at once")
     app.console.info(
         f"the previous contents are kept at {plan.kept}; "
         "remove them once you are satisfied nothing is missing"

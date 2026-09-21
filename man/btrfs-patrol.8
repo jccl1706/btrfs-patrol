@@ -298,7 +298,13 @@ Processes that already have files open under the directory keep writing to the
 old copy until they reopen it \- systemd\-journald being the obvious one. They
 are listed afterwards with a
 .B systemctl restart
-line for the services among them. Nothing is restarted automatically.
+line for the services that accept one. A unit that refuses a manual restart -
+.BR auditd (8)
+sets RefuseManualStart and holds
+.IR /var/log ,
+so this is the ordinary case - is named separately, because including it makes
+the whole command fail and reopens nothing; only a reboot moves it across.
+Nothing is restarted automatically.
 .PP
 It refuses
 .IR / ,

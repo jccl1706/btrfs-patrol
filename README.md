@@ -294,16 +294,24 @@ and little time — btrfs shares the extents and only the metadata is duplicated
 
 **Processes that already have the directory open keep writing to the old copy**
 until they reopen it; systemd-journald is the obvious one. They are listed
-afterwards, with a `systemctl restart` line for the services among them. Nothing
-is restarted for you, and the previous contents are *kept*, not deleted, so
-whatever they wrote in the meantime can still be recovered:
+afterwards, with a `systemctl restart` line for the services that will accept
+one. Nothing is restarted for you, and the previous contents are *kept*, not
+deleted, so whatever they wrote in the meantime can still be recovered:
 
 ```console
 warning: these still have the old /var/log open and keep writing to it:
-  systemd-journald.service     pid 412
+  auditd.service               pid 3651
+  systemd-journald.service     pid 14502
 :: reopen them with: systemctl restart systemd-journald
+:: auditd.service refuses a manual restart; only a reboot reopens it
+:: a reboot reopens everything at once
 :: the previous contents are kept at /var/.log.pre-subvolume
 ```
+
+A unit that sets `RefuseManualStart` or `RefuseManualStop` is named separately
+rather than put in the restart line. `auditd` does, and it holds `/var/log`, so
+including it made the whole command fail with exit status 4 and reopened
+nothing — only a reboot moves it onto the new subvolume.
 
 Remove `/var/.log.pre-subvolume` once you are satisfied nothing is missing.
 

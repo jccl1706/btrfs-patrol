@@ -88,21 +88,60 @@ class UnitOfTests(unittest.TestCase):
         self.assertIsNone(convert._unit_of(Path("/nonexistent-pid")))
 
 
-class RestartHintTests(unittest.TestCase):
+class RestartPlanTests(unittest.TestCase):
+    def plan(self, found, refusing=()):
+        with mock.patch("btrfs_patrol.convert.refuses_manual_restart",
+                        side_effect=lambda unit: unit in refusing):
+            return convert.restart_plan(found)
+
     def test_names_only_services_and_strips_the_suffix(self):
         found = [
             convert.Holder(pid=1, comm="systemd-journal", unit="systemd-journald.service"),
             convert.Holder(pid=2, comm="kitty", unit="app-kitty.scope"),
             convert.Holder(pid=3, comm="rsyslogd", unit="rsyslog.service"),
         ]
-        self.assertEqual(
-            convert.restart_hint(found), "systemctl restart rsyslog systemd-journald"
-        )
+        command, reboot_only = self.plan(found)
+        self.assertEqual(command, "systemctl restart rsyslog systemd-journald")
+        self.assertEqual(reboot_only, [])
 
     def test_none_when_nothing_is_a_service(self):
         found = [convert.Holder(pid=2, comm="bash", unit=None)]
-        self.assertIsNone(convert.restart_hint(found))
-        self.assertIsNone(convert.restart_hint([]))
+        self.assertEqual(self.plan(found), (None, []))
+        self.assertEqual(self.plan([]), (None, []))
+
+    def test_a_unit_that_refuses_is_kept_out_of_the_command(self):
+        # auditd holds /var/log and sets RefuseManualStart=yes. Naming it made
+        # the whole restart fail and reopened nothing.
+        found = [
+            convert.Holder(pid=1, comm="auditd", unit="auditd.service"),
+            convert.Holder(pid=2, comm="systemd-journal", unit="systemd-journald.service"),
+        ]
+        command, reboot_only = self.plan(found, refusing={"auditd.service"})
+        self.assertEqual(command, "systemctl restart systemd-journald")
+        self.assertEqual(reboot_only, ["auditd.service"])
+
+    def test_no_command_at_all_when_every_service_refuses(self):
+        found = [convert.Holder(pid=1, comm="auditd", unit="auditd.service")]
+        command, reboot_only = self.plan(found, refusing={"auditd.service"})
+        self.assertIsNone(command)
+        self.assertEqual(reboot_only, ["auditd.service"])
+
+
+class RefusesManualRestartTests(unittest.TestCase):
+    def answer(self, output):
+        with mock.patch("btrfs_patrol.convert.system.run", return_value=output):
+            return convert.refuses_manual_restart("x.service")
+
+    def test_yes_for_either_property(self):
+        self.assertTrue(self.answer("yes\nno\n"))    # RefuseManualStart
+        self.assertTrue(self.answer("no\nyes\n"))    # RefuseManualStop
+
+    def test_no_when_both_are_no(self):
+        self.assertFalse(self.answer("no\nno\n"))
+
+    def test_assumes_restartable_when_systemctl_cannot_be_asked(self):
+        with mock.patch("btrfs_patrol.convert.system.run", side_effect=PatrolError("no systemd")):
+            self.assertFalse(convert.refuses_manual_restart("x.service"))
 
 
 class HolderDescribeTests(unittest.TestCase):

@@ -159,12 +159,44 @@ def _unit_of(proc: Path) -> str | None:
     return None
 
 
-def restart_hint(found: Sequence[Holder]) -> str | None:
-    """A 'systemctl restart ...' line for the services among found, if any."""
+def refuses_manual_restart(unit: str) -> bool:
+    """Whether systemd would decline 'systemctl restart unit'.
+
+    AUDITD IS WHY THIS EXISTS, and it is not an exotic case: it holds /var/log
+    open, so it appears in the report for the very example this command was
+    written for, and it sets RefuseManualStart=yes. Naming it in the restart
+    line made the WHOLE command fail - exit status 4, "Operation refused, unit
+    auditd.service may be requested by dependency only" - and left it holding
+    the old directory while the user believed they had been told what to do.
+    Advice that does not work is worse than no advice.
+    """
+    try:
+        out = system.run(
+            "systemctl", "show", "-p", "RefuseManualStart", "-p", "RefuseManualStop",
+            "--value", unit,
+        )
+    except (PatrolError, OSError):
+        # No systemd, or the unit went away between the scan and here. Offering
+        # the restart and being wrong beats silently dropping it from the list.
+        return False
+    return "yes" in out.split()
+
+
+def restart_plan(found: Sequence[Holder]) -> tuple[str | None, list[str]]:
+    """How to make the holders reopen: a restart line, and the units that refuse one.
+
+    Returns (command, reboot_only). Either can be empty - nothing here is a
+    service, or every service that is refuses to be restarted by hand.
+    """
     services = sorted({h.unit for h in found if h.unit and h.unit.endswith(".service")})
-    if not services:
-        return None
-    return "systemctl restart " + " ".join(s.removesuffix(".service") for s in services)
+    reboot_only = [unit for unit in services if refuses_manual_restart(unit)]
+    restartable = [unit for unit in services if unit not in reboot_only]
+    command = (
+        "systemctl restart " + " ".join(u.removesuffix(".service") for u in restartable)
+        if restartable
+        else None
+    )
+    return command, reboot_only
 
 
 @contextlib.contextmanager
