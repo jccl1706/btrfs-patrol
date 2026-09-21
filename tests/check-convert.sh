@@ -46,6 +46,7 @@ bad() { printf '   \033[31mFAIL\033[0m %s\n' "$*"; fails=$((fails+1)); }
 cleanup() {
     say "cleaning up"
     [ -n "$HOLDER_PID" ] && kill "$HOLDER_PID" 2>/dev/null
+    [ -n "${HOLDER_UNIT:-}" ] && systemctl stop "$HOLDER_UNIT.service" 2>/dev/null
     if btrfs subvolume show "$TARGET" >/dev/null 2>&1; then
         btrfs subvolume delete "$TARGET" >/dev/null 2>&1 && echo "   removed subvolume $TARGET"
     fi
@@ -82,11 +83,24 @@ BEFORE_MODE=$(stat -c '%a' "$TARGET/sub/note.txt")
 BEFORE_CTX=$(ls -Zd "$TARGET" | awk '{print $1}')
 echo "   $(find "$TARGET" | wc -l) entries, context $BEFORE_CTX"
 
-# A process holding a file open, so the "still open by" report has something
-# real to find rather than being taken on trust.
+# Two processes holding a file open, because the report treats them
+# differently and only one of the two paths is otherwise ever taken here:
+#
+#   - a plain background job lands in the session's scope, so it is named by
+#     the process ("tail"), with the scope in brackets;
+#   - a transient systemd unit is a .service, so it is named by the unit AND
+#     gets a "systemctl restart" line offered for it.
+#
+# The second is what holds /var/log on a real system - systemd-journald - so
+# without it the service branch would only ever be exercised in anger.
 tail -f "$TARGET/sub/note.txt" >/dev/null 2>&1 &
 HOLDER_PID=$!
-sleep 0.3
+HOLDER_UNIT=patrol-convert-check-holder
+systemd-run --quiet --collect --unit="$HOLDER_UNIT" \
+    tail -f "$TARGET/sub/deeper/leaf.txt" 2>/dev/null \
+    && echo "   holding it open: pid $HOLDER_PID (session) and $HOLDER_UNIT.service" \
+    || { HOLDER_UNIT=""; echo "   holding it open: pid $HOLDER_PID (systemd-run unavailable)"; }
+sleep 0.5
 
 say "1. --dry-run changes nothing"
 PYTHONPATH=$REPO/src python3 -m btrfs_patrol --config "$CONFIG" convert "$TARGET" --dry-run
@@ -134,11 +148,22 @@ grep -q "\[subvolumes.$SUBVOL\]" "$CONFIG" \
 python3 -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" "$CONFIG" \
     && ok "the configuration still parses" || bad "the configuration no longer parses"
 
-say "6. the process holding it open was reported"
-if grep -q "pid $HOLDER_PID" "$OUTPUT"; then ok "tail (pid $HOLDER_PID) was named"
-else bad "the held-open process was not reported"; fi
-if grep -q "still open by" "$OUTPUT"; then ok "the plan listed it before converting"
-else bad "the plan did not list it"; fi
+say "6. the processes holding it open were reported"
+if grep -q "pid $HOLDER_PID" "$OUTPUT"; then ok "the session process (pid $HOLDER_PID) was named"
+else bad "the session process was not reported"; fi
+if grep -q "still open by" "$OUTPUT"; then ok "the plan listed them before converting"
+else bad "the plan did not list them"; fi
+if [ -n "${HOLDER_UNIT:-}" ]; then
+    if grep -q "$HOLDER_UNIT.service" "$OUTPUT"; then ok "the service was named by its unit"
+    else bad "the service was not named by its unit"; fi
+    # The branch that matters on a real system: journald holds /var/log, and
+    # what you want told is which unit to restart.
+    if grep -q "systemctl restart .*$HOLDER_UNIT" "$OUTPUT"; then
+        ok "a 'systemctl restart' line was offered for it"
+    else bad "no 'systemctl restart' line for the service"; fi
+else
+    echo "   (systemd-run unavailable, service branch skipped)"
+fi
 
 say "RESULT"
 [ "$fails" -eq 0 ] && printf '   \033[32mall checks passed\033[0m\n' \
