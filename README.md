@@ -33,7 +33,7 @@ It targets the layout `dnf` and Anaconda give you - btrfs with `root` and `home`
 subvolumes, `/boot` on its own partition, optionally LUKS - and nothing else, so
 it can check each step rather than guess.
 
-> **Status: 0.5.0.** Young software, on the part of your system you most need to
+> **Status: 0.6.0.** Young software, on the part of your system you most need to
 > work. Every release is tested by hand on real hardware and in VMs, including
 > rollbacks with reboots - see [Tested on](#tested-on) - but snapshots are not
 > backups, so keep backups too.
@@ -50,7 +50,8 @@ and reimplemented in Python for Fedora. See [NOTICE](NOTICE) for credits.
   rollback refuses snapshots whose kernel can't be booted. Both kinds of boot
   entry count: `/boot/loader/entries` files and unified kernel images.
 - **Other subvolumes too**: `/home`, or any other subvolume, can get snapshots
-  of its own and be rolled back on its own.
+  of its own and be rolled back on its own. `btrfs-patrol convert` turns an
+  ordinary directory such as `/var/log` into one.
 - **Boots a snapshot** from the boot menu, so a system that no longer starts can
   be rolled back without a live USB.
 - **No dependencies** beyond Python 3.11+, `btrfs-progs` and `util-linux`.
@@ -84,6 +85,7 @@ btrfs-patrol delete SELECTOR [--yes]      delete snapshots
 btrfs-patrol prune                        delete snapshots beyond the limit
 btrfs-patrol prune-kernels [--dry-run]    remove boot entries with no kernel modules
 btrfs-patrol check                        check configuration, mounts and snapshots
+btrfs-patrol convert PATH [--dry-run]     turn a directory into a subvolume it can snapshot
 btrfs-patrol rollback ID [--dry-run]      roll a subvolume back to a snapshot, then reboot
 ```
 
@@ -255,6 +257,62 @@ dnf = false           # in dnf's snapshots too (default: false)
 The path has to be a subvolume already: btrfs-patrol doesn't turn a directory
 into one.
 
+## Converting a directory
+
+A directory inside the root subvolume goes wherever root goes: it is part of
+root's snapshots, and rolling root back rolls it back too. `convert` makes it a
+subvolume of its own, which can then be snapshotted and rolled back separately.
+
+```console
+$ sudo btrfs-patrol convert /var/log
+directory:          /var/log (412.8 MiB, 1,203 files)
+filesystem:         /dev/vda2, as root/var/log from the top level
+new subvolume:      nested in place, no /etc/fstab entry needed
+SELinux:            labels copied with the contents
+plan:
+  1. create a subvolume at /var/.log.new-subvolume
+  2. copy the contents into it, sharing extents (reflink)
+  3. move /var/log aside to /var/.log.pre-subvolume
+  4. move the subvolume into place as /var/log
+  5. add [subvolumes.var-log] to /etc/btrfs-patrol/config.toml
+still open by:
+  systemd-journald.service     pid 412
+Convert /var/log to subvolume 'var-log'? [y/N] y
+:: /var/log is now the subvolume 'var-log'
+:: added [subvolumes.var-log] to /etc/btrfs-patrol/config.toml
+```
+
+**It is nested, not mounted.** A subvolume created where the directory was
+appears at its own path with no `/etc/fstab` entry and no mount unit, the way
+`/var/lib/portables` already does on a stock Fedora system. Nothing is edited
+that a failed boot would make hard to undo. Snapshots of root stop including it,
+which is the point; rolling root back moves it across into the restored root
+untouched, so the logs you would want to read *after* a rollback survive it.
+
+**The copy is reflinked**, so converting a large directory costs almost no space
+and little time — btrfs shares the extents and only the metadata is duplicated.
+
+**Processes that already have the directory open keep writing to the old copy**
+until they reopen it; systemd-journald is the obvious one. They are listed
+afterwards, with a `systemctl restart` line for the services among them. Nothing
+is restarted for you, and the previous contents are *kept*, not deleted, so
+whatever they wrote in the meantime can still be recovered:
+
+```console
+warning: these still have the old /var/log open and keep writing to it:
+  systemd-journald.service     pid 412
+:: reopen them with: systemctl restart systemd-journald
+:: the previous contents are kept at /var/.log.pre-subvolume
+```
+
+Remove `/var/.log.pre-subvolume` once you are satisfied nothing is missing.
+
+It refuses `/`, `/boot`, `/etc`, `/usr` and the pseudo-filesystems, a path that
+is already a subvolume, a mount point, a symlink, and anything not on the btrfs
+filesystem mounted at `/`. `--name` sets the subvolume's name (the default comes
+from the path: `/var/log` becomes `var-log`) and `--no-config` prints the
+`[subvolumes.NAME]` table instead of writing it.
+
 ## Tested on
 
 Every release is exercised by hand, not only by the test suite: real rollbacks,
@@ -310,9 +368,7 @@ tests/                          unittest suite (test_man.py keeps the manual in 
 
 ## Roadmap
 
-1. A command that turns an existing directory, such as `/var/log`, into a
-   subvolume safely, so it can be snapshotted and rolled back on its own.
-2. A terminal user interface (TUI): browse snapshots of every subvolume, see
+1. A terminal user interface (TUI): browse snapshots of every subvolume, see
    what changed between two of them, take, keep, describe and delete
    snapshots, and step through a rollback with its checks and plan on screen
    before confirming. Built on Python's own curses module, so btrfs-patrol

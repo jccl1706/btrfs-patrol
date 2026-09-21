@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from btrfs_patrol import __version__, boot, btrfs, dnf, rollback, selinux, setup, system
+from btrfs_patrol import __version__, boot, btrfs, convert, dnf, rollback, selinux, setup, system
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.config import ROOT, Config, ManagedSubvolume
 from btrfs_patrol.errors import PatrolError
@@ -389,6 +389,58 @@ def check_subvolume(
     return [], []
 
 
+def cmd_convert(app: App, args: argparse.Namespace) -> int:
+    path = Path(args.path)
+    name = args.name or convert.default_name(path)
+    require_confirmation_possible(args.yes or args.dry_run)
+    manage = not args.no_config
+    with convert.prepare(
+        app.config, config_mod.resolve_path(args.config), path, name, manage
+    ) as plan:
+        for line in plan.describe():
+            app.print(line)
+        for warning in plan.warnings:
+            app.console.warn(warning)
+        if args.dry_run:
+            app.console.info("dry run: nothing changed")
+            return 0
+        if not confirm(app.console, f"Convert {plan.path} to subvolume {name!r}?", args.yes):
+            app.console.info("nothing changed")
+            return 1
+        plan.execute()
+
+    app.console.info(f"{plan.path} is now the subvolume {name!r}")
+    if manage:
+        app.console.info(
+            f"added [{config_mod.SUBVOLUMES_SECTION}.{name}] to "
+            f"{config_mod.resolve_path(args.config)}; "
+            f"'btrfs-patrol snapshot -s {name}' takes its first snapshot"
+        )
+    else:
+        app.console.info("to snapshot it, add this to the configuration:")
+        for line in convert.table_text(name, plan.path).strip("\n").split("\n"):
+            app.print(f"  {line}")
+    # Reported AFTER the swap rather than before: the point is what to do now,
+    # and a process that opened the directory while the copy ran would have been
+    # missed by a list printed earlier.
+    still = convert.holders(plan.kept)
+    if still:
+        app.console.warn(
+            f"these still have the old {plan.path} open and keep writing to it:"
+        )
+        for holder in still:
+            app.print(f"  {holder.describe()}")
+        hint = convert.restart_hint(still)
+        if hint:
+            app.console.info(f"reopen them with: {hint}")
+        app.console.info("or reboot, which reopens everything")
+    app.console.info(
+        f"the previous contents are kept at {plan.kept}; "
+        "remove them once you are satisfied nothing is missing"
+    )
+    return 0
+
+
 def cmd_check(app: App, args: argparse.Namespace) -> int:
     """Compare the configuration with what is mounted, and look for broken snapshots."""
     config = app.config
@@ -594,6 +646,17 @@ def build_parser() -> argparse.ArgumentParser:
     command = add("rollback", cmd_rollback,
                   "roll a subvolume back to one of its snapshots, then reboot to use it", True)
     command.add_argument("id", type=int)
+    command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
+    command.add_argument("-n", "--dry-run", action="store_true",
+                         help="run every check and show the plan, without changing anything")
+
+    command = add("convert", cmd_convert,
+                  "turn an existing directory into a btrfs subvolume it can snapshot", True)
+    command.add_argument("path", help="the directory to convert, such as /var/log")
+    command.add_argument("--name", metavar="NAME",
+                         help="name for the subvolume (default: from the path, /var/log -> var-log)")
+    command.add_argument("--no-config", action="store_true",
+                         help="don't add a [subvolumes.NAME] table to the configuration")
     command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
     command.add_argument("-n", "--dry-run", action="store_true",
                          help="run every check and show the plan, without changing anything")

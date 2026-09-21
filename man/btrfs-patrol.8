@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: GPL-3.0-or-later
 .\" Manual page for btrfs-patrol. Preview with: man -l man/btrfs-patrol.8
-.TH BTRFS-PATROL 8 "2026-09-16" "btrfs-patrol 0.5.0" "System Administration"
+.TH BTRFS-PATROL 8 "2026-09-21" "btrfs-patrol 0.6.0" "System Administration"
 .\" Left-aligned and unhyphenated, so commands, paths and package names stay whole.
 .\" The man macros reapply these at every paragraph, from groff's AD string and HY register.
 .ds AD l
@@ -270,6 +270,57 @@ warnings, and asks for confirmation. See
 and
 .BR "OTHER SUBVOLUMES" .
 .RS
+.TP
+.BR \-n ", " \-\-dry\-run
+Run every check and show the plan, and change nothing.
+.TP
+.BR \-y ", " \-\-yes
+Do not ask for confirmation.
+.RE
+.
+.TP
+.B convert \fIPATH\fR [\fB\-\-name\fR \fINAME\fR] [\fB\-\-no\-config\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-y\fR|\fB\-\-yes\fR]
+Turn the existing directory
+.I PATH
+into a btrfs subvolume, so it can be snapshotted and rolled back on its own
+instead of going wherever the root subvolume goes. The new subvolume is
+nested where the directory was, so no
+.BR fstab (5)
+entry and no mount unit are needed, and snapshots of root stop including it.
+.RS
+.PP
+The contents are copied with reflinks, so the copy shares its extents with the
+original and costs almost no space. The directory is then moved aside and the
+subvolume put in its place; the previous contents are kept, not deleted, and
+their location is printed.
+.PP
+Processes that already have files open under the directory keep writing to the
+old copy until they reopen it \- systemd\-journald being the obvious one. They
+are listed afterwards with a
+.B systemctl restart
+line for the services among them. Nothing is restarted automatically.
+.PP
+It refuses
+.IR / ,
+.IR /boot ,
+.IR /etc ,
+.IR /usr
+and the pseudo\-filesystems, a path that is already a subvolume, a mount point,
+and anything not on the btrfs filesystem mounted at
+.IR / .
+.TP
+.BR \-\-name " " \fINAME\fR
+Name for the subvolume in the configuration and in
+.BR list .
+The default comes from the path:
+.I /var/log
+becomes
+.IR var\-log .
+.TP
+.B \-\-no\-config
+Do not add a
+.BI [subvolumes. NAME ]
+table to the configuration. The table is printed instead, to paste in by hand.
 .TP
 .BR \-n ", " \-\-dry\-run
 Run every check and show the plan, and change nothing.

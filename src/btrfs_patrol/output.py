@@ -47,7 +47,14 @@ class Style:
 
 
 class Console:
-    """Status messages. Warnings, errors and prompts go to stderr so stdout stays clean."""
+    """Status messages. Warnings, errors and prompts go to stderr so stdout stays clean.
+
+    EVERY MESSAGE FLUSHES stdout first. stdout is block-buffered when it is a
+    pipe or a file while stderr is not, so without this a command that prints a
+    plan and then warns about it has the warning arrive FIRST once the output is
+    piped anywhere - which is exactly when someone is reading it later and least
+    able to tell that the order is an artefact.
+    """
 
     def __init__(self, color: str = "auto", out: TextIO | None = None, err: TextIO | None = None):
         self.out = out or sys.stdout
@@ -55,13 +62,22 @@ class Console:
         self.style = Style(color_enabled(color, self.out))
         self.err_style = Style(color_enabled(color, self.err))
 
+    def _sync(self) -> None:
+        try:
+            self.out.flush()
+        except (OSError, ValueError):
+            pass
+
     def info(self, message: str) -> None:
+        self._sync()
         print(f"{self.style.blue('::')} {message}", file=self.out)
 
     def warn(self, message: str) -> None:
+        self._sync()
         print(f"{self.err_style.yellow('warning:')} {message}", file=self.err)
 
     def error(self, message: str) -> None:
+        self._sync()
         print(f"{self.err_style.red('error:')} {message}", file=self.err)
 
 
