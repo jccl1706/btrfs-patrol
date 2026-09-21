@@ -202,10 +202,26 @@ entries = 3
 The newest snapshots then get an entry each, written when a snapshot is taken
 and removed when one is deleted or pruned. They are Boot Loader Specification
 Type #1 entries, which systemd-boot reads directly. Fedora's GRUB reads the same
-files through `blscfg`, so one entry should serve both - but only systemd-boot
-has been tested so far, on two machines. They work on a system whose
-kernels are unified kernel images too: the kernel and initrd that go into the
-image are still on the boot partition, which is what an entry needs.
+files through `blscfg`, so one entry serves both; both have now been tested on
+real machines. They work on a system whose kernels are unified kernel images
+too: the kernel and initrd that go into the image are still on the boot
+partition, which is what an entry needs.
+
+**On Fedora's GRUB, two things differ from systemd-boot**, neither of them a
+fault but both worth knowing before you rely on this:
+
+- **The menu is hidden after a boot that worked.** Fedora sets
+  `menu_auto_hide=1`, so the entries are there and you will not see them. Hold
+  `Esc` during boot to get the menu, or `sudo grub2-editenv - unset
+  menu_auto_hide` to have it always. It shows itself after a *failed* boot,
+  which is the case this feature exists for.
+- **The snapshots are listed above the normal entry.** Each carries
+  `sort-key zz-btrfs-patrol`, which puts them last in systemd-boot; GRUB's
+  `blscfg` does not use it. **This does not change what boots by default**:
+  Fedora's `GRUB_DEFAULT=saved` records the entry by id rather than by
+  position, so the saved entry stays the one it was. Verified with
+  `grub2-editenv list` and `grubby --default-title` on a machine with the
+  entries written.
 
 Booting one gives you:
 
