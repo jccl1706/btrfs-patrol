@@ -433,7 +433,12 @@ def cmd_convert(app: App, args: argparse.Namespace) -> int:
         hint = convert.restart_hint(still)
         if hint:
             app.console.info(f"reopen them with: {hint}")
-        app.console.info("or reboot, which reopens everything")
+            app.console.info("or reboot, which reopens everything")
+        else:
+            # Nothing holding it is a service, so there is no restart line to
+            # offer - and "or reboot" on its own reads as the alternative to
+            # something that was never said.
+            app.console.info("restart them, or reboot, to make them reopen it")
     app.console.info(
         f"the previous contents are kept at {plan.kept}; "
         "remove them once you are satisfied nothing is missing"
