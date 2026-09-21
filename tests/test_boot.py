@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from btrfs_patrol import boot
 from btrfs_patrol.boot import (
     ENTRY_PREFIX,
     entry_text,
@@ -407,3 +408,45 @@ class SyncEntriesTests(unittest.TestCase):
         self.sync([(7, self.KERNEL, "Snapshot 7")])
         mode = (self.entries / f"{ENTRY_PREFIX}7.conf").stat().st_mode & 0o777
         self.assertEqual(mode, 0o600)
+
+
+class ImagePrefixTests(unittest.TestCase):
+    """Which prefix kernel-install's entries put before the kernel path.
+
+    Empty when /boot is its own partition, "/boot" when /boot is a directory or
+    subvolume of the root filesystem. Getting it wrong hands GRUB a kernel it
+    cannot find, and GRUB stops after "Welcome to GRUB!" saying nothing.
+    """
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.dir = Path(directory.name)
+
+    def write(self, name, linux):
+        (self.dir / name).write_text(
+            f"title Fedora Linux\nversion 7.2.5\nlinux {linux}\ninitrd /x.img\noptions ro\n"
+        )
+
+    def test_a_separate_boot_partition_needs_no_prefix(self):
+        self.write("abc-7.2.5.conf", "/vmlinuz-7.2.5")
+        self.assertEqual(boot.image_prefix(self.dir), "")
+
+    def test_boot_on_the_root_filesystem_needs_one(self):
+        self.write("abc-7.2.5.conf", "/boot/vmlinuz-7.2.5")
+        self.assertEqual(boot.image_prefix(self.dir), "/boot")
+
+    def test_our_own_entries_are_ignored(self):
+        # They would only repeat whatever was guessed last time.
+        (self.dir / f"{boot.ENTRY_PREFIX}1.conf").write_text("linux /boot/vmlinuz-7.2.5\n")
+        self.write("abc-7.2.5.conf", "/vmlinuz-7.2.5")
+        self.assertEqual(boot.image_prefix(self.dir), "")
+
+    def test_no_entries_at_all_falls_back_to_the_specification(self):
+        self.assertEqual(boot.image_prefix(self.dir), "")
+
+    def test_an_unreadable_entry_does_not_stop_the_search(self):
+        bad = self.dir / "aaa-broken.conf"
+        bad.write_text("linux \n")
+        self.write("bbb-7.2.5.conf", "/boot/vmlinuz-7.2.5")
+        self.assertEqual(boot.image_prefix(self.dir), "/boot")

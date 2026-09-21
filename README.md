@@ -260,6 +260,16 @@ Only entries btrfs-patrol wrote are ever changed or removed - `kernel-install`
 owns that directory too - and a snapshot whose kernel is no longer on the boot
 partition is skipped rather than offered as something it is not.
 
+The path to the kernel is **copied from an entry the system already has**
+rather than worked out. The specification says it is relative to `$BOOT`, and
+where `/boot` is its own partition that is what everything agrees on
+(`linux /vmlinuz-6.19.10`). Where `/boot` is a directory or a subvolume of the
+root filesystem - Fedora's Cloud image is laid out that way - GRUB opens the
+whole filesystem and resolves from its root, so `kernel-install` writes
+`linux /boot/vmlinuz-7.2.5` instead. Writing the specification's path on such a
+system gives GRUB a kernel it cannot find, and GRUB says nothing about it: it
+stops after `Welcome to GRUB!` with no message and no working keyboard.
+
 ## Other subvolumes
 
 Besides the root subvolume, btrfs-patrol can take snapshots of other

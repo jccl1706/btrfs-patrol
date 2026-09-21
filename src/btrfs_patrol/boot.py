@@ -305,6 +305,44 @@ def kernel_files(boot_dir: Path, machine_id: str, version: str) -> tuple[str, st
     return None
 
 
+def image_prefix(entries_dir: Path) -> str:
+    """The prefix kernel-install's own entries put before their kernel path.
+
+    ORDINARILY EMPTY, AND ON SOME SYSTEMS "/boot", WHICH IS NOT A DETAIL.
+    The Boot Loader Specification says a Type #1 entry's `linux` path is
+    relative to $BOOT, and when /boot is its own partition that is what
+    everything agrees on: `linux /vmlinuz-6.19.10`. But when /boot is a
+    directory or a subvolume of the root filesystem - Fedora's Cloud image is
+    laid out that way - GRUB opens the whole filesystem and resolves from its
+    root, so kernel-install writes `linux /boot/vmlinuz-7.2.5` instead.
+
+    Writing the specification's path on such a system gives GRUB a kernel it
+    cannot find, and GRUB does not say so: it stops after "Welcome to GRUB!"
+    with no message and no working keyboard, which looks like a broken machine
+    rather than a bad menu entry. Measured on a VM laid out that way; the same
+    entry boots correctly where /boot is its own partition.
+
+    So the convention is copied from an entry the system already has rather
+    than worked out. kernel-install's entries are the authority on what this
+    bootloader expects, and there is always at least one or the machine could
+    not boot.
+    """
+    for path in sorted(entries_dir.glob("*.conf")):
+        if path.name.startswith(ENTRY_PREFIX):
+            continue  # ours; it would only repeat whatever we guessed before
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        for line in text.splitlines():
+            field, _, value = line.partition(" ")
+            if field.strip() == "linux" and value.strip().startswith("/boot/"):
+                return "/boot"
+            if field.strip() == "linux" and value.strip():
+                return ""
+    return ""
+
+
 def snapshot_entries(entries_dir: Path) -> dict[int, Path]:
     """Our own entries, by snapshot ID. Entries we did not write are never touched."""
     found = {}
@@ -335,13 +373,14 @@ def sync_snapshot_entries(
     """
     entries_dir.mkdir(parents=True, exist_ok=True)
     existing = snapshot_entries(entries_dir)
+    prefix = image_prefix(entries_dir)
     written, skipped = [], []
     for snapshot_id, version, title in wanted:
         files = kernel_files(boot_dir, machine_id, version)
         if files is None:
             skipped.append(snapshot_id)
             continue
-        linux, initrd = files
+        linux, initrd = (prefix + part for part in files)
         subvolume = f"{snapshots_subvolume.strip('/')}/{snapshot_id}/{SUBVOLUME_NAME}"
         text = entry_text(title, version, linux, initrd, snapshot_options(cmdline, subvolume))
         path = entries_dir / f"{ENTRY_PREFIX}{snapshot_id}.conf"
