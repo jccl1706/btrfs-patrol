@@ -227,6 +227,21 @@ Booting one gives you:
 
 - The snapshot, **read-only**. Nothing done in that session is kept, and the
   snapshot itself cannot be altered by it.
+
+  `findmnt /` will nonetheless say `rw`, and that is not a mistake to go
+  chasing. The kernel mounts it `ro` as the entry asks, and then
+  `systemd-remount-fs.service` applies `/etc/fstab`, whose line for `/` says
+  nothing about `ro` and so remounts it read-write. The VFS permits that; the
+  writes still fail, because the **subvolume** carries btrfs's read-only
+  property from the moment the snapshot was taken, and that is what refuses
+  them:
+
+  ```console
+  $ touch /anything
+  touch: cannot touch '/anything': Read-only file system
+  ```
+
+  Verified on a booted snapshot, which is the only place it can be.
 - `/home`, and any other subvolume mounted on its own, writable as usual.
 - `btrfs-patrol rollback ID`, which restores the root subvolume - the one that
   is *not* running, so nothing is using it - after which a normal reboot starts
