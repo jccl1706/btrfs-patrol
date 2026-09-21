@@ -388,6 +388,7 @@ data/
 man/btrfs-patrol.8              manual page
 packaging/btrfs-patrol.spec     RPM spec for Fedora / COPR
 packaging/RELEASE.md            how a release is cut: version, tag, COPR, GitHub
+docs/tui-design.md              the planned terminal interface
 tests/                          unittest suite (test_man.py keeps the manual in step)
   check-convert.sh              end-to-end check for convert; needs root and a btrfs /
 ```
@@ -398,7 +399,9 @@ tests/                          unittest suite (test_man.py keeps the manual in 
    what changed between two of them, take, keep, describe and delete
    snapshots, and step through a rollback with its checks and plan on screen
    before confirming. Built on Python's own curses module, so btrfs-patrol
-   still needs nothing beyond Python, `btrfs-progs` and `util-linux`.
+   still needs nothing beyond Python, `btrfs-progs` and `util-linux`. The
+   design is written up in [docs/tui-design.md](docs/tui-design.md): browsing
+   and managing first, rollback and diff after.
 
 ## License
 
