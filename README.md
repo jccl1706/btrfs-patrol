@@ -68,9 +68,11 @@ sudo btrfs-patrol setup --dry-run   # see what setup will do
 sudo btrfs-patrol setup
 ```
 
-`dnf upgrade` then keeps it up to date. To install without the repository, every
+`dnf upgrade` then keeps it up to date. To install without the repository, each
+[release](https://github.com/jccl1706/btrfs-patrol/releases) has the RPM and
+source RPM with their SHA-256 sums, and every
 [COPR build](https://copr.fedorainfracloud.org/coprs/jccl1706/btrfs-patrol/builds/)
-keeps its RPM and source RPM, one set per Fedora release and architecture.
+keeps a set per Fedora release and architecture.
 
 ## Commands
 
