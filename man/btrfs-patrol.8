@@ -336,6 +336,38 @@ Do not ask for confirmation.
 .RE
 .
 .TP
+.B diff \fIOLD\fR \fINEW\fR
+Show what changed between two snapshots of the same subvolume: files added,
+removed, modified and renamed, and those whose permissions, ownership or
+extended attributes changed.
+.RS
+.PP
+It asks btrfs itself, with
+.B "btrfs send \-\-no\-data"
+piped into
+.BR "btrfs receive \-\-dump" ,
+so no file contents are read and the cost is in metadata rather than in the
+size of the tree. Both snapshots must be of the same subvolume; either order
+works, and reversing them reverses the answer.
+.PP
+Timestamps alone are not a change. Running a program updates its access time,
+so a comparison across any real work would otherwise be mostly binaries that
+were merely executed.
+.PP
+Output is one path per line, marked
+.B +
+added,
+.B \-
+removed,
+.B ~
+modified,
+.B >
+renamed and
+.B a
+attributes.
+.RE
+.
+.TP
 .B tui
 Browse and manage snapshots in a full\-screen interface. The snapshot list of
 every configured subvolume, the detail of the highlighted one, and the keys to
@@ -360,6 +392,8 @@ keeps or unkeeps;
 deletes, after confirming;
 .B R
 rolls back to the highlighted snapshot, showing the plan and its checks first;
+.B c
+marks a snapshot and then compares it with another;
 .B /
 filters with a selector, as
 .B list
@@ -375,7 +409,11 @@ It enforces the same rules the commands do: a snapshot is not taken while a
 rollback is waiting for its reboot or while the snapshots subvolume is not
 mounted, and the snapshot the system is currently running from is not deleted.
 .PP
-Comparing two snapshots is not in it yet.
+Every command above is reachable from it except
+.BR setup ,
+.B check
+and
+.BR prune .
 .RE
 .
 .TP

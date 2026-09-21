@@ -87,6 +87,7 @@ btrfs-patrol delete SELECTOR [--yes]      delete snapshots
 btrfs-patrol prune                        delete snapshots beyond the limit
 btrfs-patrol prune-kernels [--dry-run]    remove boot entries with no kernel modules
 btrfs-patrol check                        check configuration, mounts and snapshots
+btrfs-patrol diff OLD NEW                 what changed between two snapshots
 btrfs-patrol tui                          browse and manage snapshots full-screen
 btrfs-patrol convert PATH [--dry-run]     turn a directory into a subvolume it can snapshot
 btrfs-patrol rollback ID [--dry-run]      roll a subvolume back to a snapshot, then reboot
@@ -372,6 +373,7 @@ pyproject.toml                  package metadata
 src/btrfs_patrol/
   cli.py                        argument parsing and commands
   tui.py · screen.py            the full-screen interface, and its view model
+  diff.py                       what changed between two snapshots, via btrfs send
   config.py                     configuration loading and validation
   config.toml.example           the commented default configuration
   setup.py                      setup's checks and steps
@@ -397,13 +399,12 @@ tests/                          unittest suite (test_man.py keeps the manual in 
 
 ## Roadmap
 
-1. A terminal user interface (TUI): browse snapshots of every subvolume, see
-   what changed between two of them, take, keep, describe and delete
-   snapshots, and step through a rollback with its checks and plan on screen
-   before confirming. Built on Python's own curses module, so btrfs-patrol
-   still needs nothing beyond Python, `btrfs-progs` and `util-linux`. The
-   design is written up in [docs/tui-design.md](docs/tui-design.md): browsing
-   and managing first, rollback and diff after.
+Nothing outstanding. The last item, a terminal interface, is built — see
+[docs/tui-design.md](docs/tui-design.md) — and `btrfs-patrol tui` browses every
+subvolume's snapshots, takes, keeps, describes and deletes them, compares two,
+and steps through a rollback with its checks and plan on screen before
+confirming. It uses Python's own curses, so btrfs-patrol still needs nothing
+beyond Python, `btrfs-progs` and `util-linux`.
 
 ## License
 

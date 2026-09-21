@@ -5,7 +5,7 @@ A terminal interface for browsing and managing snapshots, on Python's own
 `curses` so btrfs-patrol still needs nothing beyond Python, `btrfs-progs` and
 `util-linux`.
 
-Status: built, including rollback. Diff is the one thing still to come.
+Status: built. Everything the roadmap asked for is here.
 
 ## What the first version does
 
@@ -36,13 +36,20 @@ When they do arrive:
   while the plan is in use, so the TUI holds it open across keypresses in an
   `ExitStack` and closes it whether the rollback went ahead, was declined, or
   raised. A test asserts that for all three.
-- **Diff** uses `btrfs send --no-data -p A B | btrfs receive --dump`, which asks
-  btrfs itself what changed between two snapshots. It is exact, it reads no file
-  contents, and its cost is in metadata rather than tree size. It needs the
-  snapshots to be read-only, which they are: `SnapshotStore` creates them with
-  `readonly=True`. `diff -rq` was the alternative and was rejected because it
-  stats every file in both trees, so it gets slower as the system grows, on
-  exactly the subvolume most worth diffing.
+- **Diff** is **done**, on `c` — mark one snapshot, press `c` on another. It
+  uses `btrfs send --no-data -p A B | btrfs receive --dump`, which asks btrfs
+  itself what changed: exact, no file contents read, cost in metadata rather
+  than tree size. `diff -rq` was the alternative and stats every file in both
+  trees, so it gets slower as the system grows, on exactly the subvolume most
+  worth diffing.
+
+  **The stream is not a diff**, and `diff.py` is mostly the distance between the
+  two — see its docstring. A new file is created under a temporary name and
+  renamed into place; a rename arrives as `link` + `unlink`, whose `dest=` is
+  the one path in the stream without the subvolume prefix; and timestamps alone
+  are not a change, because running a program updates its atime. Each of those
+  was found by comparing snapshots whose differences were arranged in advance,
+  and `tests/data/` keeps that stream as a fixture.
 
 ## Entry point
 

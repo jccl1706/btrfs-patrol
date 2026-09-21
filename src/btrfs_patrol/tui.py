@@ -35,6 +35,7 @@ from .cli import (
 from .config import ROOT
 from .errors import PatrolError
 from .screen import ALL, Glyphs, Mode, Screen
+from . import diff as diff_mod
 from . import rollback as rollback_mod
 from . import system
 
@@ -44,6 +45,7 @@ NEXT_SUBVOLUME, PREV_SUBVOLUME = "next_subvolume", "prev_subvolume"
 OPEN, NEW, DESCRIBE, KEEP, DELETE = "open", "new", "describe", "keep", "delete"
 FILTER, RELOAD, HELP, QUIT = "filter", "reload", "help", "quit"
 ROLLBACK = "rollback"
+COMPARE = "compare"
 ACCEPT, CANCEL, BACKSPACE, YES, NO = "accept", "cancel", "backspace", "yes", "no"
 
 
@@ -103,6 +105,7 @@ def action_for(key: int, mode: Mode = Mode.BROWSE) -> str | None:
             # subvolume, and it should not be reachable by a slipped finger on
             # the row below 'e'. Lower-case r stays reload.
             "R": ROLLBACK,
+            "c": COMPARE,
             "/": FILTER,
             "r": RELOAD,
             "?": HELP,
@@ -190,6 +193,8 @@ class Controller:
             self._ask_delete()
         elif action == ROLLBACK:
             self._begin_rollback()
+        elif action == COMPARE:
+            self._compare()
         elif action == CANCEL and screen.query:
             screen.query = ""
             screen.move_to(0)
@@ -250,6 +255,51 @@ class Controller:
         else:
             screen.cancel()
             screen.report("nothing changed")
+
+    def _compare(self) -> None:
+        """Mark a snapshot, or compare the marked one with this one.
+
+        TWO KEYSTROKES APART, because a comparison needs two snapshots and
+        there is only one cursor. The first press marks and says so; the second,
+        on a different row, does the work. Pressing it again on the same row
+        unmarks, so a mis-hit costs nothing.
+        """
+        snapshot = self.screen.current
+        if snapshot is None:
+            return
+        if self.screen.marked_id is None:
+            self.screen.marked_id = snapshot.id
+            self.screen.report(f"snapshot {snapshot.id} marked; press c on another to compare")
+            return
+        if self.screen.marked_id == snapshot.id:
+            self.screen.marked_id = None
+            self.screen.report("mark cleared")
+            return
+        marked = self.screen.marked_id
+        self.screen.marked_id = None
+        self._guard(lambda: self._show_comparison(marked, snapshot.id))
+
+    def _show_comparison(self, first: int, second: int) -> None:
+        store = self.app.store
+        one, two = store.load(first), store.load(second)
+        if one.subvolume != two.subvolume:
+            raise PatrolError(
+                f"snapshot {one.id} is of {one.subvolume!r} and {two.id} is of "
+                f"{two.subvolume!r}; only snapshots of the same subvolume can be compared"
+            )
+        # Oldest first, so the changes read as what happened over time rather
+        # than backwards - whichever order the two were marked in.
+        older, newer = (one, two) if one.id < two.id else (two, one)
+        comparison = diff_mod.compare(
+            store.subvolume(older.id), store.subvolume(newer.id), older.id, newer.id
+        )
+        body = ["", f"  {comparison.summary()}", ""]
+        body.extend(f"  {line}" for line in comparison.lines())
+        self.screen.show_page(
+            f"Snapshot {older.id} to {newer.id} ({older.subvolume})",
+            body,
+            footer="any key to go back",
+        )
 
     # --- rollback ---------------------------------------------------------
 

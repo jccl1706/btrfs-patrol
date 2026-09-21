@@ -1,0 +1,30 @@
+snapshot        ./snapshot                      uuid=844f1c07-3b90-534e-8f54-c89ec4e623e5 transid=55 parent_uuid=7551ea1e-4edd-7747-9f1e-7f1735e5c91b parent_transid=54
+utimes          ./snapshot/usr/bin/rmdir        atime=2026-09-21T22:25:56+0000 mtime=2026-08-03T00:00:00+0000 ctime=2026-09-21T22:21:12+0000
+chmod           ./snapshot/difftest/unchanged.txt mode=600
+utimes          ./snapshot/difftest/unchanged.txt atime=2026-09-21T22:25:55+0000 mtime=2026-09-21T22:25:55+0000 ctime=2026-09-21T22:25:56+0000
+update_extent   ./snapshot/difftest/modified.txt offset=0 len=12
+utimes          ./snapshot/difftest/modified.txt atime=2026-09-21T22:25:55+0000 mtime=2026-09-21T22:25:56+0000 ctime=2026-09-21T22:25:56+0000
+unlink          ./snapshot/difftest/deleted.txt
+link            ./snapshot/difftest/newname.txt dest=difftest/oldname.txt
+unlink          ./snapshot/difftest/oldname.txt
+utimes          ./snapshot/difftest/newname.txt atime=2026-09-21T22:25:55+0000 mtime=2026-09-21T22:25:55+0000 ctime=2026-09-21T22:25:56+0000
+rmdir           ./snapshot/difftest/deleted-dir
+mkfile          ./snapshot/o50578-55-0
+rename          ./snapshot/o50578-55-0          dest=./snapshot/difftest/added.txt
+set_xattr       ./snapshot/difftest/added.txt   name=security.selinux unconfined_u:object_r:default_t:s0\000 len=35
+update_extent   ./snapshot/difftest/added.txt   offset=0 len=10
+chown           ./snapshot/difftest/added.txt   gid=0 uid=0
+chmod           ./snapshot/difftest/added.txt   mode=644
+utimes          ./snapshot/difftest/added.txt   atime=2026-09-21T22:25:56+0000 mtime=2026-09-21T22:25:56+0000 ctime=2026-09-21T22:25:56+0000
+mkdir           ./snapshot/o50579-55-0
+rename          ./snapshot/o50579-55-0          dest=./snapshot/difftest/added-dir
+set_xattr       ./snapshot/difftest/added-dir   name=security.selinux unconfined_u:object_r:default_t:s0\000 len=35
+chown           ./snapshot/difftest/added-dir   gid=0 uid=0
+chmod           ./snapshot/difftest/added-dir   mode=755
+utimes          ./snapshot/difftest/added-dir   atime=2026-09-21T22:25:56+0000 mtime=2026-09-21T22:25:56+0000 ctime=2026-09-21T22:25:56+0000
+symlink         ./snapshot/o50580-55-0          dest=unchanged.txt
+rename          ./snapshot/o50580-55-0          dest=./snapshot/difftest/link.txt
+set_xattr       ./snapshot/difftest/link.txt    name=security.selinux unconfined_u:object_r:default_t:s0\000 len=35
+chown           ./snapshot/difftest/link.txt    gid=0 uid=0
+utimes          ./snapshot/difftest/link.txt    atime=2026-09-21T22:25:56+0000 mtime=2026-09-21T22:25:56+0000 ctime=2026-09-21T22:25:56+0000
+utimes          ./snapshot/difftest             atime=2026-09-21T22:25:55+0000 mtime=2026-09-21T22:25:56+0000 ctime=2026-09-21T22:25:56+0000

@@ -12,7 +12,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from btrfs_patrol import __version__, boot, btrfs, convert, dnf, rollback, selinux, setup, system
+from btrfs_patrol import (
+    __version__, boot, btrfs, convert, diff as diff_mod, dnf, rollback, selinux, setup, system,
+)
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.config import ROOT, Config, ManagedSubvolume
 from btrfs_patrol.errors import PatrolError
@@ -451,6 +453,27 @@ def cmd_convert(app: App, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_diff(app: App, args: argparse.Namespace) -> int:
+    [older] = app.matching(str(args.old))
+    [newer] = app.matching(str(args.new))
+    if older.id == newer.id:
+        raise PatrolError("that is the same snapshot twice")
+    if older.subvolume != newer.subvolume:
+        raise PatrolError(
+            f"snapshot {older.id} is of {older.subvolume!r} and {newer.id} is of "
+            f"{newer.subvolume!r}; only snapshots of the same subvolume can be compared"
+        )
+    comparison = diff_mod.compare(
+        app.store.subvolume(older.id), app.store.subvolume(newer.id), older.id, newer.id
+    )
+    app.console.info(
+        f"snapshot {older.id} -> {newer.id} ({older.subvolume}): {comparison.summary()}"
+    )
+    for line in comparison.lines():
+        app.print(line)
+    return 0
+
+
 def cmd_tui(app: App, args: argparse.Namespace) -> int:
     # IMPORTED HERE, NOT AT THE TOP. tui imports this module for the checks it
     # must not reimplement - what may be deleted, when a snapshot may be taken -
@@ -680,6 +703,10 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
     command.add_argument("-n", "--dry-run", action="store_true",
                          help="run every check and show the plan, without changing anything")
+
+    command = add("diff", cmd_diff, "show what changed between two snapshots", True)
+    command.add_argument("old", type=int, metavar="OLD")
+    command.add_argument("new", type=int, metavar="NEW")
 
     add("tui", cmd_tui, "browse and manage snapshots in a full-screen interface", True)
 

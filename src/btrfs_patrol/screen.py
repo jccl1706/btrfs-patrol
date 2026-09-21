@@ -138,6 +138,8 @@ class Screen:
     input_purpose: str = ""
     #: While mode is CONFIRM: what will happen if the answer is yes.
     pending: str = ""
+    #: The snapshot marked with 'c', waiting for a second one to compare against.
+    marked_id: int | None = None
     #: While mode is PAGE: the heading, the body, and the keys under it.
     page_title: str = ""
     page_lines: list[str] = field(default_factory=list)
@@ -360,7 +362,12 @@ class Screen:
         span = self.rows_available
         for index in range(self.top, min(self.top + span, len(rows))):
             snapshot = rows[index]
-            marker = f"{self.glyphs.cursor} " if index == self.cursor else "  "
+            if snapshot.id == self.marked_id:
+                # The marked snapshot stays visible while the cursor moves away
+                # to find the other one, which is the whole point of marking.
+                marker = f"{self.glyphs.cursor}c" if index == self.cursor else " c"
+            else:
+                marker = f"{self.glyphs.cursor} " if index == self.cursor else "  "
             lines.append(marker + table.row(snapshot) + table.description(snapshot))
         return lines
 
@@ -414,6 +421,12 @@ class Screen:
     def key_line(self) -> str:
         """The keys, as many as fit.
 
+        ORDERED BY USEFULNESS, NOT BY DANGER, because the order is the order
+        they are dropped in. Compare sits above delete and roll back: it is the
+        one people reach for most and the only one of the three that changes
+        nothing, while the two that do are exactly the ones worth looking up in
+        ? before pressing.
+
         DROPPED FROM THE RIGHT WHEN THE WIDTH RUNS OUT, rather than truncated.
         A bar ending in "/ filte\u2026" tells you there is a key without telling you
         what it does, which is worse than not offering it: the ones kept are
@@ -425,12 +438,13 @@ class Screen:
             return "enter accept   esc cancel"
         keys = [
             (self.glyphs.arrows, "move"),
-            (self.glyphs.tab, "subvolume"),
+            (self.glyphs.tab, "subvol"),
             ("n", "new"),
             ("d", "describe"),
             ("k", "keep"),
+            ("c", "compare" if self.marked_id is None else f"compare with #{self.marked_id}"),
             ("x", "delete"),
-            ("R", "roll back"),
+            ("R", "rollback"),
             ("/", "filter"),
             ("r", "reload"),
             ("?", "help"),
@@ -438,7 +452,7 @@ class Screen:
         ]
         if self.current is None:
             # Nothing to act on, so offer only what still means something.
-            acts_on_a_snapshot = ("d", "k", "x", "R")
+            acts_on_a_snapshot = ("d", "k", "x", "R", "c")
             keys = [k for k in keys if k[0] not in acts_on_a_snapshot]
         if self.query:
             keys.insert(-2, ("esc", "clear filter"))
@@ -514,12 +528,13 @@ class Screen:
             "  k                            keep / unkeep this snapshot",
             "  x                            delete this snapshot, after confirming",
             "  R                            roll back to this snapshot (shift, deliberately)",
+            "  c                            compare: mark one snapshot, then press c on another",
             "  /                            filter, using a 'list' selector",
             "  r                            reload from disk",
             "  ?                            this help",
             "  q                            quit",
             "",
-            "  Comparing two snapshots is not here yet.",
+            "  Everything the roadmap asked for is here.",
             "",
             "  any key to go back",
         ]

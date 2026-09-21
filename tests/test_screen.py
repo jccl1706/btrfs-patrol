@@ -227,9 +227,11 @@ class ModeTests(unittest.TestCase):
         for key in ("n ", "d ", "k ", "x ", "R ", "/ ", "q "):
             self.assertIn(key, text)
 
-    def test_help_says_what_is_still_missing(self):
+    def test_help_lists_compare_and_rollback_too(self):
         self.screen.mode = Mode.HELP
-        self.assertIn("Comparing two snapshots", "\n".join(self.screen.render()))
+        text = "\n".join(self.screen.render())
+        self.assertIn("roll back to this snapshot", text)
+        self.assertIn("compare", text)
 
 
 class MessageTests(unittest.TestCase):
