@@ -5,7 +5,7 @@ A terminal interface for browsing and managing snapshots, on Python's own
 `curses` so btrfs-patrol still needs nothing beyond Python, `btrfs-progs` and
 `util-linux`.
 
-Status: design agreed, not yet built.
+Status: `screen.py` built and tested; `tui.py` next.
 
 ## What the first version does
 
@@ -84,11 +84,15 @@ cursor moves between snapshots with longer or shorter descriptions.
 
 ### Narrow and plain terminals
 
-`format_table` already takes a width, but it only ever narrows the description;
-below a certain width that is not enough. Dropping columns is new behaviour:
-KERNEL goes first, then TIME, because a date and a description identify a
-snapshot and a kernel version rarely does. It belongs in the shared layout code
-above, so `list` gains it too rather than the two diverging.
+**Done.** `format_table` only ever narrowed the description, so a long kernel
+version — and Fedora's are long — could leave it four columns wide, or push the
+row past the width it was given. `layout()` now drops KERNEL first and TIME
+second, because a date and a description identify a snapshot and a kernel
+version rarely does. It is in the shared code, so `list` gained it too.
+
+The detail strip's facts drop from the end for the same reason, and KERNEL sits
+second-to-last there deliberately: the table drops it first, so the two never
+both hide it.
 
 `▸`, `·` and `⇥` are decoration. On a terminal that cannot encode them the
 fallbacks are `>`, `-` and `tab`; the check is whether the locale's encoding can
@@ -150,13 +154,11 @@ Bugs concentrate in the layer that has tests.
   `cmd_delete` and `cmd_snapshot` call. No second set of rules about what may be
   deleted.
 
-`format_table` builds the whole table as one string. Inside it already are the
-four things a per-row renderer needs — `headers`, the `rows` tuples, the
-computed `widths`, and the `cells()` closure that pads and joins them — but they
-are local to the function. Lift those into something both callers use, leaving
-`format_table` as the thin "join the rows with newlines" case. Writing a second
-layout instead is how the CLI table and the TUI table come to disagree about
-what a snapshot looks like the first time either changes.
+**Done.** `output.layout()` returns a `TableLayout` that measures the columns
+and renders one row at a time; `format_table` is now the thin "join the rows
+with newlines" case over the same object. Writing a second layout instead is how
+the CLI table and the TUI table come to disagree about what a snapshot looks
+like the first time either changes.
 
 ### Colour
 

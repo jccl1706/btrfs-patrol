@@ -7,6 +7,7 @@ import os
 import sys
 import unicodedata
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TextIO
 
 from btrfs_patrol.snapshots import Snapshot
@@ -160,6 +161,98 @@ def wrap_text(text: str, limit: int) -> list[str]:
         lines.append(current)
     return lines
 
+@dataclass(frozen=True)
+class TableLayout:
+    """The column widths for a set of snapshots, and how to render one row.
+
+    SPLIT OUT OF format_table SO THE TUI CAN DRAW ONE ROW AT A TIME. It needs a
+    cursor and it scrolls, so it cannot take the whole table as a single string
+    - and a second copy of this layout is how the two come to disagree about
+    what a snapshot looks like the first time either changes.
+    """
+
+    headers: tuple[str, ...]
+    widths: tuple[int, ...]
+    show_subvolume: bool
+    description_width: int
+
+    @property
+    def indent(self) -> int:
+        """Where the DESCRIPTION column starts."""
+        return sum(self.widths) + len(GAP) * len(self.widths)
+
+    def header(self) -> str:
+        return self.cells(self.headers) + "DESCRIPTION"
+
+    def cells(self, values: Sequence[str]) -> str:
+        # IDs are right-aligned so the '*' marker sits next to the number.
+        first = pad(values[0], self.widths[0], right=True)
+        rest = (pad(value, w) for value, w in zip(values[1:], self.widths[1:]))
+        return GAP.join([first, *rest]) + GAP
+
+    def row(self, snapshot: Snapshot) -> str:
+        """The row's fixed columns, without the description."""
+        return self.cells(columns(snapshot, self.headers))
+
+    def description(self, snapshot: Snapshot) -> str:
+        """The description as it appears in the table: printable, truncated, never empty."""
+        return truncate(printable(snapshot.description) or "-", self.description_width)
+
+
+#: Columns the table gives up when the width is tight, in the order they go.
+#: KERNEL first and TIME second: a date and a description identify a snapshot,
+#: and a kernel version rarely does. ID, DATE, KIND and DESCRIPTION always stay,
+#: and SUBVOLUME is already only asked for when it distinguishes anything.
+DROPPABLE = ("KERNEL", "TIME")
+
+
+def _value(snapshot: Snapshot, header: str) -> str:
+    if header == "ID":
+        return f"{'*' if snapshot.keep else ''}{snapshot.id}"
+    if header == "DATE":
+        return snapshot.created.strftime("%Y-%m-%d")
+    if header == "TIME":
+        return snapshot.created.strftime("%H:%M:%S")
+    if header == "SUBVOLUME":
+        return snapshot.subvolume
+    if header == "KERNEL":
+        return snapshot.kernel
+    return snapshot.kind
+
+
+def columns(snapshot: Snapshot, headers: Sequence[str]) -> tuple[str, ...]:
+    """A snapshot's fixed columns, in the order headers gives them."""
+    return tuple(_value(snapshot, header) for header in headers)
+
+
+def layout(snapshots: Sequence[Snapshot], width: int, show_subvolume: bool = False) -> TableLayout:
+    """Measure the columns needed for snapshots within width.
+
+    COLUMNS ARE DROPPED WHEN THEY DO NOT FIT, rather than letting the row run
+    past the width it was given. A long kernel version - and Fedora's are long -
+    could otherwise leave the description four columns wide on an 80-column
+    terminal, or push the row off the edge entirely, which is the one thing a
+    width argument is supposed to prevent.
+    """
+    headers = ["ID", "DATE", "TIME", *(["SUBVOLUME"] if show_subvolume else []), "KERNEL", "KIND"]
+    for droppable in (None, *DROPPABLE):
+        if droppable is not None:
+            headers.remove(droppable)
+        widths = tuple(
+            max([display_width(header), *(display_width(_value(s, header)) for s in snapshots)])
+            for header in headers
+        )
+        indent = sum(widths) + len(GAP) * len(widths)
+        if width - indent >= MIN_DESCRIPTION_WIDTH or droppable == DROPPABLE[-1]:
+            return TableLayout(
+                headers=tuple(headers),
+                widths=widths,
+                show_subvolume=show_subvolume,
+                description_width=max(width - indent, MIN_DESCRIPTION_WIDTH),
+            )
+    raise AssertionError("unreachable")
+
+
 def format_table(
     snapshots: Sequence[Snapshot],
     style: Style,
@@ -169,46 +262,22 @@ def format_table(
 ) -> str:
     """Render snapshots as a table that fits in width columns.
 
-    Long descriptions are truncated with '…', or wrapped onto indented lines
+    Long descriptions are truncated with '\u2026', or wrapped onto indented lines
     when wrap is true. Kept snapshots are marked with '*' before their ID. The
     SUBVOLUME column is only shown when asked for, so a system that snapshots
     root alone keeps the narrower table.
     """
-    headers = ["ID", "DATE", "TIME", *(["SUBVOLUME"] if show_subvolume else []), "KERNEL", "KIND"]
-    rows = [
-        (
-            f"{'*' if s.keep else ''}{s.id}",
-            s.created.strftime("%Y-%m-%d"),
-            s.created.strftime("%H:%M:%S"),
-            *([s.subvolume] if show_subvolume else []),
-            s.kernel,
-            s.kind,
-        )
-        for s in snapshots
-    ]
-    widths = [
-        max([display_width(header), *(display_width(row[i]) for row in rows)])
-        for i, header in enumerate(headers)
-    ]
-    indent = sum(widths) + len(GAP) * len(widths)
-    description_width = max(width - indent, MIN_DESCRIPTION_WIDTH)
-
-    def cells(values: Sequence[str]) -> str:
-        # IDs are right-aligned so the '*' marker sits next to the number.
-        first = pad(values[0], widths[0], right=True)
-        rest = (pad(value, w) for value, w in zip(values[1:], widths[1:]))
-        return GAP.join([first, *rest]) + GAP
-
-    lines = [style.bold(cells(headers) + "DESCRIPTION")]
-    for snapshot, row in zip(snapshots, rows):
-        prefix = cells(row)
+    table = layout(snapshots, width, show_subvolume)
+    lines = [style.bold(table.header())]
+    for snapshot in snapshots:
+        prefix = table.row(snapshot)
         if snapshot.keep:
             prefix = prefix.replace("*", style.green("*"), 1)
         description = printable(snapshot.description) or "-"
         if wrap:
-            parts = wrap_text(description, description_width) or [description]
+            parts = wrap_text(description, table.description_width) or [description]
         else:
-            parts = [truncate(description, description_width)]
+            parts = [truncate(description, table.description_width)]
         lines.append(prefix + parts[0])
-        lines.extend(" " * indent + part for part in parts[1:])
+        lines.extend(" " * table.indent + part for part in parts[1:])
     return "\n".join(lines)
