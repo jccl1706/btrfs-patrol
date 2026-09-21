@@ -67,6 +67,9 @@ class Mode(Enum):
     DETAIL = "detail"
     """One snapshot's full detail is covering the screen."""
 
+    PAGE = "page"
+    """A full-screen page - a rollback plan - waiting for an answer."""
+
 
 @dataclass(frozen=True)
 class Glyphs:
@@ -80,6 +83,7 @@ class Glyphs:
 
     cursor: str = "▸"      # ▸
     separator: str = "·"   # ·
+    arrows: str = "↑↓"        # ↑↓
     tab: str = "⇥"         # ⇥
     rule: str = "─"        # ─
 
@@ -89,14 +93,16 @@ class Glyphs:
         if not encoding:
             return cls.plain()
         try:
-            "".join([fancy.cursor, fancy.separator, fancy.tab, fancy.rule]).encode(encoding)
+            "".join(
+                [fancy.cursor, fancy.separator, fancy.arrows, fancy.tab, fancy.rule]
+            ).encode(encoding)
         except (UnicodeEncodeError, LookupError):
             return cls.plain()
         return fancy
 
     @classmethod
     def plain(cls) -> Glyphs:
-        return cls(cursor=">", separator="-", tab="tab", rule="-")
+        return cls(cursor=">", separator="-", arrows="up/dn", tab="tab", rule="-")
 
 
 @dataclass
@@ -132,6 +138,11 @@ class Screen:
     input_purpose: str = ""
     #: While mode is CONFIRM: what will happen if the answer is yes.
     pending: str = ""
+    #: While mode is PAGE: the heading, the body, and the keys under it.
+    page_title: str = ""
+    page_lines: list[str] = field(default_factory=list)
+    page_warnings: list[str] = field(default_factory=list)
+    page_footer: str = ""
 
     # --- the list ---------------------------------------------------------
 
@@ -250,12 +261,33 @@ class Screen:
         self.input_buffer = initial
         self.clear_message()
 
+    def show_page(
+        self, title: str, lines: Sequence[str], warnings: Sequence[str] = (), footer: str = ""
+    ) -> None:
+        """Cover the screen with something that needs reading before answering.
+
+        The rollback plan is the reason this exists: its checks, its warnings
+        and what it is about to do are far more than the two-line detail strip
+        can hold, and it is the one action here that should not be answered
+        without reading.
+        """
+        self.mode = Mode.PAGE
+        self.page_title = title
+        self.page_lines = list(lines)
+        self.page_warnings = list(warnings)
+        self.page_footer = footer
+        self.clear_message()
+
     def cancel(self) -> None:
         """Back to browsing, whatever was in progress."""
         self.mode = Mode.BROWSE
         self.pending = ""
         self.input_buffer = ""
         self.input_purpose = ""
+        self.page_title = ""
+        self.page_lines = []
+        self.page_warnings = []
+        self.page_footer = ""
         self.clear_message()
 
     def type_character(self, character: str) -> None:
@@ -293,6 +325,8 @@ class Screen:
             return self._fit(self.help_lines())
         if self.mode is Mode.DETAIL:
             return self._fit(self.detail_page())
+        if self.mode is Mode.PAGE:
+            return self._fit(self.page_body())
         lines = [self.title_line(), self.rule()]
         lines.extend(self.table_lines())
         lines.append(self.rule())
@@ -390,12 +424,13 @@ class Screen:
         if self.mode is Mode.INPUT:
             return "enter accept   esc cancel"
         keys = [
-            ("up/down", "move"),
+            (self.glyphs.arrows, "move"),
             (self.glyphs.tab, "subvolume"),
             ("n", "new"),
             ("d", "describe"),
             ("k", "keep"),
             ("x", "delete"),
+            ("R", "roll back"),
             ("/", "filter"),
             ("r", "reload"),
             ("?", "help"),
@@ -403,7 +438,7 @@ class Screen:
         ]
         if self.current is None:
             # Nothing to act on, so offer only what still means something.
-            acts_on_a_snapshot = ("d", "k", "x")
+            acts_on_a_snapshot = ("d", "k", "x", "R")
             keys = [k for k in keys if k[0] not in acts_on_a_snapshot]
         if self.query:
             keys.insert(-2, ("esc", "clear filter"))
@@ -421,6 +456,18 @@ class Screen:
     @staticmethod
     def _join_keys(keys: Sequence[tuple[str, str]]) -> str:
         return "   ".join(f"{key} {what}" for key, what in keys)
+
+    def page_body(self) -> list[str]:
+        """A full-screen page: heading, body, warnings, then the keys."""
+        lines = [self.page_title, self.rule()]
+        lines.extend(self.page_lines)
+        if self.page_warnings:
+            lines.append("")
+            lines.extend(f"warning: {text}" for text in self.page_warnings)
+        lines.append("")
+        lines.append(self.rule())
+        lines.append(self.page_footer)
+        return lines
 
     def detail_page(self) -> list[str]:
         """Everything known about the highlighted snapshot, nothing abbreviated.
@@ -466,12 +513,13 @@ class Screen:
             "  d                            change this snapshot's description",
             "  k                            keep / unkeep this snapshot",
             "  x                            delete this snapshot, after confirming",
+            "  R                            roll back to this snapshot (shift, deliberately)",
             "  /                            filter, using a 'list' selector",
             "  r                            reload from disk",
             "  ?                            this help",
             "  q                            quit",
             "",
-            "  Rollback and diff are not here yet: use 'btrfs-patrol rollback'.",
+            "  Comparing two snapshots is not here yet.",
             "",
             "  any key to go back",
         ]

@@ -19,6 +19,7 @@ See docs/tui-design.md.
 
 from __future__ import annotations
 
+import contextlib
 import curses
 import locale
 from collections.abc import Sequence
@@ -42,11 +43,34 @@ UP, DOWN, PAGE_UP, PAGE_DOWN, HOME, END = "up", "down", "page_up", "page_down", 
 NEXT_SUBVOLUME, PREV_SUBVOLUME = "next_subvolume", "prev_subvolume"
 OPEN, NEW, DESCRIBE, KEEP, DELETE = "open", "new", "describe", "keep", "delete"
 FILTER, RELOAD, HELP, QUIT = "filter", "reload", "help", "quit"
+ROLLBACK = "rollback"
 ACCEPT, CANCEL, BACKSPACE, YES, NO = "accept", "cancel", "backspace", "yes", "no"
 
 
-def action_for(key: int) -> str | None:
-    """The action a key code means, or None if it means nothing here."""
+def action_for(key: int, mode: Mode = Mode.BROWSE) -> str | None:
+    """The action a key code means in `mode`, or None if it means nothing there.
+
+    THE MODE IS PART OF IT, and leaving it out was a bug rather than a
+    simplification: an answer of "y" means yes on a confirmation and on a
+    rollback plan, and means nothing at all while browsing. Deciding that in the
+    input loop instead - where no test can reach it - is how the rollback plan
+    came to answer "nothing rolled back" to a pressed y, while every controller
+    test passed because they hand the controller YES directly.
+    """
+    if mode in (Mode.CONFIRM, Mode.PAGE):
+        if key in (curses.KEY_ENTER, 10, 13):
+            return ACCEPT
+        if 0 <= key < 0x110000:
+            return YES if chr(key).lower() == "y" else NO
+        return NO
+    if mode is Mode.INPUT:
+        if key in (curses.KEY_ENTER, 10, 13):
+            return ACCEPT
+        if key == 27:
+            return CANCEL
+        if key in (curses.KEY_BACKSPACE, 127, 8):
+            return BACKSPACE
+        return None
     if key == curses.KEY_UP:
         return UP
     if key == curses.KEY_DOWN:
@@ -75,6 +99,10 @@ def action_for(key: int) -> str | None:
             "d": DESCRIBE,
             "k": KEEP,
             "x": DELETE,
+            # SHIFT, DELIBERATELY. This is the one key here that replaces a
+            # subvolume, and it should not be reachable by a slipped finger on
+            # the row below 'e'. Lower-case r stays reload.
+            "R": ROLLBACK,
             "/": FILTER,
             "r": RELOAD,
             "?": HELP,
@@ -89,6 +117,11 @@ class Controller:
 
     app: App
     screen: Screen
+
+    #: While a rollback plan is on screen: the open plan, and the context that
+    #: keeps the top-level subvolume mounted for as long as the plan is in use.
+    plan: object | None = None
+    plan_context: contextlib.ExitStack | None = None
 
     # --- helpers ----------------------------------------------------------
 
@@ -112,6 +145,9 @@ class Controller:
         if screen.mode is Mode.HELP or screen.mode is Mode.DETAIL:
             # Any key returns; the page says so.
             screen.mode = Mode.BROWSE
+            return True
+        if screen.mode is Mode.PAGE:
+            self._page(action)
             return True
         if screen.mode is Mode.CONFIRM:
             self._confirm(action)
@@ -152,6 +188,8 @@ class Controller:
             self._guard(self.toggle_keep)
         elif action == DELETE:
             self._ask_delete()
+        elif action == ROLLBACK:
+            self._begin_rollback()
         elif action == CANCEL and screen.query:
             screen.query = ""
             screen.move_to(0)
@@ -212,6 +250,74 @@ class Controller:
         else:
             screen.cancel()
             screen.report("nothing changed")
+
+    # --- rollback ---------------------------------------------------------
+
+    def _begin_rollback(self) -> None:
+        """Work out whether the rollback can happen, and show what it would do.
+
+        EVERY CHECK IS rollback.prepare()'S, not a copy of them. It refuses a
+        snapshot whose kernel this system has no modules for, disagrees about
+        the device, or whose store is wrong, and it works out how root is found
+        at boot and which nested subvolumes move with it. Re-deciding any of
+        that here would be a second set of rules for the operation where being
+        wrong costs most.
+        """
+        snapshot = self.screen.current
+        if snapshot is None:
+            return
+        stack = contextlib.ExitStack()
+        try:
+            plan = stack.enter_context(
+                rollback_mod.prepare(self.app.config, self.app.store, snapshot)
+            )
+        except (PatrolError, OSError) as error:
+            stack.close()
+            self.screen.fail(str(error))
+            return
+        self.plan = plan
+        self.plan_context = stack
+        self.screen.show_page(
+            f"Roll {plan.name} back to snapshot {snapshot.id}",
+            ["", *plan.describe()],
+            warnings=plan.warnings,
+            footer="y roll back   any other key cancels",
+        )
+
+    def _page(self, action: str | None) -> None:
+        confirmed = action in (YES, ACCEPT)
+        plan, stack = self.plan, self.plan_context
+        self.plan = self.plan_context = None
+        self.screen.cancel()
+        try:
+            if confirmed and plan is not None:
+                self._guard(lambda: self._execute_rollback(plan))
+            elif plan is not None:
+                self.screen.report("nothing rolled back")
+        finally:
+            # The top-level subvolume is unmounted whether it went ahead, was
+            # declined, or raised on the way.
+            if stack is not None:
+                stack.close()
+
+    def _execute_rollback(self, plan) -> None:
+        saved = plan.execute()
+        self.reload()
+        where = "" if plan.name == ROOT else f" {plan.path}"
+        self.screen.show_page(
+            f"Rolled {plan.name} back to snapshot {plan.target.id}",
+            [
+                "",
+                f"  the state from before is kept as snapshot {saved.id}",
+                "",
+                f"  reboot to use the restored{where or ' system'}"
+                if plan.mounted or plan.name == ROOT
+                else f"  the restored{where} is in place; restart what uses it, or reboot",
+            ],
+            footer="any key to go back",
+        )
+        # Nothing else is safe to assume about the list until it is read again.
+        self.screen.mode = Mode.PAGE
 
     def _guard(self, work) -> None:
         """Run an action, turning a refusal into a message instead of a crash."""
@@ -336,12 +442,7 @@ def _loop(window: "curses._CursesWindow", controller: Controller) -> None:
         character = ""
         if screen.mode is Mode.INPUT and 32 <= key < 0x110000 and key != 127:
             character = chr(key)
-        action = action_for(key)
-        if screen.mode is Mode.INPUT and key in (curses.KEY_ENTER, 10, 13):
-            action = ACCEPT
-        if screen.mode is Mode.CONFIRM and 0 <= key < 0x110000:
-            action = YES if chr(key).lower() == "y" else NO
-        running = controller.dispatch(action, character)
+        running = controller.dispatch(action_for(key, screen.mode), character)
 
 
 def _paint(window: "curses._CursesWindow", screen: Screen) -> None:

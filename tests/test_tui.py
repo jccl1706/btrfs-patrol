@@ -363,3 +363,140 @@ class ReloadTests(ControllerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakePlan:
+    """Stands in for a RollbackPlan: the controller only reads and executes it."""
+
+    def __init__(self, target, warnings=(), fail=None):
+        self.target = target
+        self.warnings = list(warnings)
+        self.name = "root"
+        self.path = Path("/")
+        self.mounted = True
+        self.fail = fail
+        self.executed = False
+
+    def describe(self):
+        return ["  root subvolume:     root (ID 256) on /dev/vda2", "  running kernel:     ok"]
+
+    def execute(self):
+        if self.fail:
+            raise self.fail
+        self.executed = True
+        return Snapshot(
+            id=99, created=datetime(2026, 9, 21, 12, 0, 0), kernel=KERNEL,
+            kind="rollback", description="state before rollback", keep=True,
+        )
+
+
+class RollbackTests(ControllerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.snapshot = self.add(description="the good one")
+        self.controller.reload()
+        self.closed = False
+
+    def arrange(self, plan=None, error=None):
+        """Patch rollback.prepare, recording whether its context was closed."""
+        outer = self
+
+        import contextlib
+
+        @contextlib.contextmanager
+        def fake_prepare(config, store, target):
+            if error is not None:
+                raise error
+            try:
+                yield plan
+            finally:
+                outer.closed = True
+
+        patcher = mock.patch.object(tui.rollback_mod, "prepare", fake_prepare)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_r_shows_the_plan_rather_than_acting(self):
+        plan = FakePlan(self.snapshot, warnings=["/home is mounted from a snapshot"])
+        self.arrange(plan)
+        self.press(tui.ROLLBACK)
+        self.assertIs(self.screen.mode, Mode.PAGE)
+        text = "\n".join(self.screen.render())
+        self.assertIn("root subvolume", text)
+        self.assertIn("/home is mounted from a snapshot", text)
+        self.assertFalse(plan.executed)
+
+    def test_y_rolls_back_and_releases_the_mount(self):
+        plan = FakePlan(self.snapshot)
+        self.arrange(plan)
+        self.press(tui.ROLLBACK)
+        self.press(tui.YES)
+        self.assertTrue(plan.executed)
+        self.assertTrue(self.closed, "the top-level subvolume was left mounted")
+        self.assertIn("reboot", "\n".join(self.screen.render()))
+
+    def test_any_other_key_cancels_and_releases_the_mount(self):
+        plan = FakePlan(self.snapshot)
+        self.arrange(plan)
+        self.press(tui.ROLLBACK)
+        self.press(tui.NO)
+        self.assertFalse(plan.executed)
+        self.assertTrue(self.closed, "the top-level subvolume was left mounted")
+        self.assertIs(self.screen.mode, Mode.BROWSE)
+        self.assertIn("nothing rolled back", self.screen.message)
+
+    def test_a_refused_rollback_says_why_and_stays_put(self):
+        # prepare() refuses a snapshot whose kernel has no modules here.
+        self.arrange(error=PatrolError("snapshot 1 has no kernel modules for 7.2.4"))
+        self.press(tui.ROLLBACK)
+        self.assertIs(self.screen.mode, Mode.BROWSE)
+        self.assertTrue(self.screen.message_is_error)
+        self.assertIn("no kernel modules", self.screen.message)
+
+    def test_a_failure_while_executing_releases_the_mount_too(self):
+        plan = FakePlan(self.snapshot, fail=PatrolError("the default subvolume did not change"))
+        self.arrange(plan)
+        self.press(tui.ROLLBACK)
+        self.press(tui.YES)
+        self.assertTrue(self.closed, "the top-level subvolume was left mounted")
+        self.assertTrue(self.screen.message_is_error)
+        self.assertIn("did not change", self.screen.message)
+
+    def test_it_does_nothing_with_an_empty_list(self):
+        self.arrange(FakePlan(self.snapshot))
+        self.screen.replace([])
+        self.press(tui.ROLLBACK)
+        self.assertIs(self.screen.mode, Mode.BROWSE)
+
+
+class ModeAwareKeyTests(unittest.TestCase):
+    """The same key means different things in different modes.
+
+    This is the layer the rollback bug slipped through: the controller tests
+    hand YES straight to dispatch(), so a y that never became YES in the input
+    loop passed every one of them.
+    """
+
+    def test_y_confirms_on_a_confirmation(self):
+        self.assertEqual(tui.action_for(ord("y"), Mode.CONFIRM), tui.YES)
+        self.assertEqual(tui.action_for(ord("Y"), Mode.CONFIRM), tui.YES)
+
+    def test_y_confirms_on_a_rollback_plan_too(self):
+        self.assertEqual(tui.action_for(ord("y"), Mode.PAGE), tui.YES)
+
+    def test_anything_else_declines_rather_than_doing_nothing(self):
+        for key in (ord("n"), ord("z"), 27):
+            self.assertEqual(tui.action_for(key, Mode.PAGE), tui.NO)
+            self.assertEqual(tui.action_for(key, Mode.CONFIRM), tui.NO)
+
+    def test_y_is_not_an_answer_while_browsing(self):
+        self.assertIsNone(tui.action_for(ord("y"), Mode.BROWSE))
+
+    def test_typing_keys_are_recognised_while_entering_text(self):
+        self.assertEqual(tui.action_for(10, Mode.INPUT), tui.ACCEPT)
+        self.assertEqual(tui.action_for(27, Mode.INPUT), tui.CANCEL)
+        self.assertEqual(tui.action_for(127, Mode.INPUT), tui.BACKSPACE)
+
+    def test_a_letter_while_typing_is_not_an_action(self):
+        # It is collected as a character instead; see _loop.
+        self.assertIsNone(tui.action_for(ord("q"), Mode.INPUT))

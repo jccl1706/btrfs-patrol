@@ -5,7 +5,7 @@ A terminal interface for browsing and managing snapshots, on Python's own
 `curses` so btrfs-patrol still needs nothing beyond Python, `btrfs-progs` and
 `util-linux`.
 
-Status: built. Browsing and managing work; rollback and diff are still to come.
+Status: built, including rollback. Diff is the one thing still to come.
 
 ## What the first version does
 
@@ -25,10 +25,17 @@ available on the command line throughout, which is where they already work.
 
 When they do arrive:
 
-- **Rollback** reuses `rollback.prepare()` exactly as `cmd_rollback` does — the
-  checks, the warnings and the plan are already a data structure with a
-  `describe()`, so the TUI shows those lines and calls `execute()`. No second
-  implementation of the rules.
+- **Rollback** is **done**, on `R` — shift, deliberately, because it is the one
+  key here that replaces a subvolume and it should not be reachable by a slipped
+  finger on the row below `e`. It reuses `rollback.prepare()` exactly as
+  `cmd_rollback` does: the checks, the warnings and the plan are already a data
+  structure with a `describe()`, so the TUI shows those lines and calls
+  `execute()`. No second implementation of the rules.
+
+  `prepare()` is a context manager that keeps the top-level subvolume mounted
+  while the plan is in use, so the TUI holds it open across keypresses in an
+  `ExitStack` and closes it whether the rollback went ahead, was declined, or
+  raised. A test asserts that for all three.
 - **Diff** uses `btrfs send --no-data -p A B | btrfs receive --dump`, which asks
   btrfs itself what changed between two snapshots. It is exact, it reads no file
   contents, and its cost is in metadata rather than tree size. It needs the
@@ -201,6 +208,12 @@ would.
   ordinary tests, and `run()`/`_loop()`, which talk to curses. The second is
   small enough that a smoke test is honest coverage of it: `test_tui_pty.py`
   gives it a real pseudo-terminal and types at it.
+
+  **The key mapping takes the mode**, and leaving it out was a real bug: `y`
+  means yes on a confirmation and on a rollback plan, and nothing while
+  browsing. Deciding that inside the input loop — where no test reaches — is how
+  a pressed `y` on the rollback plan answered "nothing rolled back" while every
+  controller test passed, because those hand the controller `YES` directly.
 
   **Arrow keys must be sent in application mode** in such a test — `\x1bOB`,
   not `\x1b[B`. curses emits terminfo's `smkx` on startup, which switches the

@@ -358,6 +358,8 @@ changes a description;
 keeps or unkeeps;
 .B x
 deletes, after confirming;
+.B R
+rolls back to the highlighted snapshot, showing the plan and its checks first;
 .B /
 filters with a selector, as
 .B list
@@ -373,9 +375,7 @@ It enforces the same rules the commands do: a snapshot is not taken while a
 rollback is waiting for its reboot or while the snapshots subvolume is not
 mounted, and the snapshot the system is currently running from is not deleted.
 .PP
-Rolling back and comparing two snapshots are not in it yet; use
-.B rollback
-for the first.
+Comparing two snapshots is not in it yet.
 .RE
 .
 .TP

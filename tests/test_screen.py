@@ -220,11 +220,16 @@ class ModeTests(unittest.TestCase):
         self.screen.begin_input("description", initial="before the new kernel")
         self.assertEqual(self.screen.input_buffer, "before the new kernel")
 
-    def test_help_replaces_the_screen_and_mentions_the_missing_commands(self):
+    def test_help_replaces_the_screen_and_lists_every_key(self):
         self.screen.mode = Mode.HELP
         text = "\n".join(self.screen.render())
         self.assertIn("keys", text)
-        self.assertIn("rollback", text)
+        for key in ("n ", "d ", "k ", "x ", "R ", "/ ", "q "):
+            self.assertIn(key, text)
+
+    def test_help_says_what_is_still_missing(self):
+        self.screen.mode = Mode.HELP
+        self.assertIn("Comparing two snapshots", "\n".join(self.screen.render()))
 
 
 class MessageTests(unittest.TestCase):
@@ -299,8 +304,8 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("q quit", line)
 
     def test_keys_that_need_a_snapshot_disappear_when_there_is_none(self):
-        line = screen([], width=120).key_line()
-        for key in ("d describe", "k keep", "x delete"):
+        line = screen([], width=140).key_line()
+        for key in ("d describe", "k keep", "x delete", "R roll back"):
             self.assertNotIn(key, line)
         self.assertIn("n new", line)
 
