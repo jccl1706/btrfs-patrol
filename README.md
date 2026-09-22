@@ -248,7 +248,25 @@ Booting one gives you:
   the restored system.
 
 Units that write to `/` fail in such a session. That is what read-only means,
-not a fault.
+not a fault. On Fedora Workstation `auditd`, `audit-rules` and `tuned` are the
+ones that fail, and `systemctl is-system-running` says `degraded` because of
+them; nothing is wrong.
+
+**The whole path has been walked on real hardware**, on a ThinkPad with a LUKS
+root and its own `/boot` partition: `rm -rf /etc`, reboot, pick the snapshot
+from the GRUB menu, `btrfs-patrol rollback`, reboot, working system. `check`
+told the session apart from a pending rollback correctly, the nested
+`var/lib/machines` moved across, and the state that was thrown away was kept as
+a `rollback` snapshot with its journal still readable.
+
+**Pick the entry from the menu rather than using `grub2-reboot`.** Its one-shot
+is meant to be consumed by the next boot, and on that machine it was not: GRUB
+went on booting the snapshot on every restart until `next_entry` was cleared by
+hand with `grub2-editenv - unset next_entry`. The likely cause is Fedora's
+`grub.cfg` reading `${config_directory}/grubenv` while `save_env` writes
+`$prefix/grubenv`, which on a UEFI install can be a different file. Choosing the
+entry at the menu never sets `next_entry`, so the machine returns to the normal
+system by itself.
 
 The kernel command line is taken from the running one rather than built, so
 everything needed to reach the disk - `rd.luks.uuid`, `rd.lvm.lv`, `root=UUID` -
