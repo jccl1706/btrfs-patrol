@@ -33,7 +33,7 @@ It targets the layout `dnf` and Anaconda give you - btrfs with `root` and `home`
 subvolumes, `/boot` on its own partition, optionally LUKS - and nothing else, so
 it can check each step rather than guess.
 
-> **Status: 0.7.0.** Young software, on the part of your system you most need to
+> **Status: 0.7.1.** Young software, on the part of your system you most need to
 > work. Every release is tested by hand on real hardware and in VMs, including
 > rollbacks with reboots - see [Tested on](#tested-on) - but snapshots are not
 > backups, so keep backups too.

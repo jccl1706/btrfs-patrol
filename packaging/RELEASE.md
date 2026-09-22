@@ -106,12 +106,18 @@ cd /tmp/rel/fedora-44-x86_64
 sha256sum btrfs-patrol-0.6.0-1.fc44.noarch.rpm \
           btrfs-patrol-0.6.0-1.fc44.src.rpm > SHA256SUMS
 
-gh release create v0.6.0 \
+gh release create v0.6.0 -R jccl1706/btrfs-patrol \
    btrfs-patrol-0.6.0-1.fc44.noarch.rpm \
    btrfs-patrol-0.6.0-1.fc44.src.rpm \
    SHA256SUMS \
    --title "btrfs-patrol 0.6.0" --notes-file notes.md --latest
 ```
+
+**`-R` is not optional.** `gh` infers the repository from the working
+directory, and the RPMs are staged under /tmp rather than in the checkout - so
+without it the release is published to whatever repository you happen to be
+standing in. That has happened: 0.7.0's release went up on `fd44_hyprdot`,
+complete with RPMs and a tag, and had to be deleted.
 
 Title is `btrfs-patrol <version>`, with no `v`. The notes open with one sentence
 saying what the release is for, then a `## New` section — see the existing
