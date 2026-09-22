@@ -389,14 +389,26 @@ from the path: `/var/log` becomes `var-log`) and `--no-config` prints the
 Every release is exercised by hand, not only by the test suite: real rollbacks,
 real reboots, on hardware and in VMs.
 
+**What that testing is not.** It is one person on two or three machines, all
+Fedora 43 and 44, in the eight days since the first commit. Two serious bugs this
+week were found only by running it on hardware, and both were in code the test
+suite passed: boot entries that hung GRUB where `/boot` is not its own
+partition, and a suggested `systemctl restart` naming a unit that refuses one.
+Fedora 45 has not been tried at all. Treat the table below as what has been
+shown to work, not as a claim about what has not been.
+
 | Version | What was tested |
 | --- | --- |
 | 0.1.x - 0.2.0 | Fedora 44 VM and a ThinkPad T480 (LUKS, LVM, btrfs), from source and from the RPM: setup, snapshots from dnf and the timer, rollback and roll forward, and hibernating with a rollback waiting for its reboot. Again from the RPM on a VM with SELinux enforcing, with no denials. |
 | 0.2.0 | The T480 again (systemd-boot entries, SELinux enforcing), upgraded from 0.1.1, and unified kernel image support on a VM booting one. |
 | 0.3.0 | A fresh Fedora 44 Workstation install with the default layout and GRUB, from COPR: setup, dnf and timer snapshots, rollback and roll forward with reboots. Snapshots of other subvolumes on that VM and the T480: `/home` and root rolled back separately, each leaving the other untouched. |
 | 0.4.0 | A Fedora 44 to 45 upgrade with `dnf system-upgrade`, rolled back: the offline transaction takes its own snapshot, the restored system came back on the older release with the packages the upgrade added and removed put back, and `prune-kernels` removed the stranded kernel's boot entry. |
-| after 0.4.1 | Snapshot boot entries, on two different layouts: a VM whose kernels are unified kernel images and no encryption, and the T480 with LUKS, LVM and Type #1 entries. Booted a generated entry on both, read-only with the desktop up, and rolled the system back from inside one. |
 | 0.4.1 | A review of every module. The tests now cover a snapshot taken into an unmounted store, a rollback acting on checks that had stopped being true while it waited to be confirmed, an interrupted rollback that could leave no root subvolume, and three ways the dnf hook could abort or hang a transaction. 162 tests to 212. |
+| 0.5.0 | Snapshot boot entries, on two different layouts: a VM whose kernels are unified kernel images and no encryption, and the T480 with LUKS, LVM and Type #1 entries. Booted a generated entry on both, read-only with the desktop up, and rolled the system back from inside one. |
+| 0.6.0 | `convert` on a Fedora 44 VM, turning a live `/var/log` into a subvolume with systemd-journald and auditd holding it open, then rebooting: contents, permissions, symlinks and SELinux contexts preserved, the copy reflinked rather than duplicated, and the processes still holding the old directory named. `tests/check-convert.sh` keeps that check in the repository. Found that `auditd` sets `RefuseManualStart`, so naming it in the suggested `systemctl restart` made the whole command fail and reopen nothing. |
+| 0.7.0 | The terminal interface driven in a real terminal against a real snapshot store, on a VM and on the T480: browsing, taking, describing, keeping and deleting, filtering, and a rollback taken through the interface followed by a reboot into the restored system. `diff` checked against two snapshots whose differences were arranged in advance - a file added, deleted, modified, renamed, a directory added and removed, a symlink made, a mode changed - and that stream is kept as a test fixture. |
+| 0.7.1 | **The whole rescue path, on real hardware.** On the T480 (Fedora 44 Workstation, LUKS root, its own `/boot` partition, a nested `var/lib/machines`): `rm -rf /etc`, reboot, pick the snapshot from the GRUB menu, `btrfs-patrol rollback` from inside it, reboot into a working system. `check` told the booted snapshot apart from a pending rollback, the nested subvolume moved across, and the discarded state was kept as a `rollback` snapshot with its journal readable. |
+| 0.7.1 | Boot entries under **Fedora's GRUB**, which had only been reasoned about before: `grubby` lists them, the kernel command line carries `rd.luks.uuid` and `rootflags` correctly, and the default boot is unaffected because `GRUB_DEFAULT=saved` records the entry by id rather than position. On a VM whose `/boot` is a btrfs subvolume rather than a partition, the entry hung GRUB outright with no message - the kernel path was right by the specification and wrong for that machine - which is what 0.7.1 fixes. |
 
 ## Development
 
