@@ -225,6 +225,27 @@ Two things worth knowing, both found by testing against a real pseudo-terminal:
   colour escape at all is testing ncurses' startup; the assertion is that no
   colour is *chosen*.
 
+### What the colour cost, and where it was found
+
+Two bugs shipped in the first colour commit and were found in a **screenshot of
+the running program**, not by the suite:
+
+- **A kept snapshot drew a blank row.** The ID cell of a kept snapshot splits
+  into the padding before the `*`, the `*`, and the digits after it — and when
+  the number leaves no padding, the first of those is `""`. `_paint` treated the
+  first empty span as the end of the line, so it drew the cursor's marker and
+  abandoned the rest. The view model had the text right, which is exactly why no
+  test caught it: `render()` joins the spans and the join is correct.
+- **The bands floated.** The table emitted only as many rows as it had
+  snapshots, so on a short list the detail and the key band came straight after
+  them — a key bar across the seventh line of a full-height terminal. The table
+  now keeps its rows whether or not it has anything to put in them.
+
+The lesson for whoever changes this next: every test here asked what a line
+**said**, and none asked **where it was** or whether it was painted at all.
+There are now tests for both, and `tests/test_tui_pty.py` is the only place that
+can see the painter. Look at it running as well.
+
 ## State that changes underneath
 
 Snapshots appear without the TUI doing anything: the daily timer, and every dnf

@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Btrfs snapshot manager and rollback tool for Fedora."""
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"

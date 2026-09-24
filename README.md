@@ -29,11 +29,18 @@ Roll back to snapshot 1? [y/N] y
 :: reboot to start the restored system
 ```
 
+Or browse them: `btrfs-patrol tui` is the same store full-screen, where the kind
+of each snapshot is a colour and the keys are on the bar at the bottom.
+
+<p align="center">
+  <img src="docs/tui.svg" alt="The terminal interface: a banded title, a table of snapshots coloured by kind, and a key bar" width="100%">
+</p>
+
 It targets the layout `dnf` and Anaconda give you - btrfs with `root` and `home`
 subvolumes, `/boot` on its own partition, optionally LUKS - and nothing else, so
 it can check each step rather than guess.
 
-> **Status: 0.7.1.** Young software, on the part of your system you most need to
+> **Status: 0.8.0.** Young software, on the part of your system you most need to
 > work. Every release is tested by hand on real hardware and in VMs, including
 > rollbacks with reboots - see [Tested on](#tested-on) - but snapshots are not
 > backups, so keep backups too.
@@ -408,6 +415,8 @@ shown to work, not as a claim about what has not been.
 | 0.6.0 | `convert` on a Fedora 44 VM, turning a live `/var/log` into a subvolume with systemd-journald and auditd holding it open, then rebooting: contents, permissions, symlinks and SELinux contexts preserved, the copy reflinked rather than duplicated, and the processes still holding the old directory named. `tests/check-convert.sh` keeps that check in the repository. Found that `auditd` sets `RefuseManualStart`, so naming it in the suggested `systemctl restart` made the whole command fail and reopen nothing. |
 | 0.7.0 | The terminal interface driven in a real terminal against a real snapshot store, on a VM and on the T480: browsing, taking, describing, keeping and deleting, filtering, and a rollback taken through the interface followed by a reboot into the restored system. `diff` checked against two snapshots whose differences were arranged in advance - a file added, deleted, modified, renamed, a directory added and removed, a symlink made, a mode changed - and that stream is kept as a test fixture. |
 | 0.7.1 | **The whole rescue path, on real hardware.** On the T480 (Fedora 44 Workstation, LUKS root, its own `/boot` partition, a nested `var/lib/machines`): `rm -rf /etc`, reboot, pick the snapshot from the GRUB menu, `btrfs-patrol rollback` from inside it, reboot into a working system. `check` told the booted snapshot apart from a pending rollback, the nested subvolume moved across, and the discarded state was kept as a `rollback` snapshot with its journal readable. |
+| 0.8.0 | **Colour, and the two things a screenshot found that the tests could not.** The interface renders through `Screen.render_styled()` now, so the plain and coloured screens cannot disagree, and `tui.Palette` is the only thing that knows what a colour is. Against a real pseudo-terminal: colour reaches the wire with `auto`, none is chosen with `never`, and `--color never` beats `color = "always"` in the configuration - a case that failed first, because the palette read `config.color` while the flag overrides the `Console`. |
+| 0.8.0 | Then a screenshot of the running program, which is the only reason the next two were found. **Every kept snapshot drew a blank row**: the ID cell of a kept snapshot begins with an empty span, and the painter treated the first empty span as the end of the line - the view model had the text right, so no test could see it. And **the bands floated**, because the table emitted only as many rows as it had snapshots: a key bar across the seventh line of a full-height terminal with the desktop showing beneath it. Both fixed, both now pinned by tests that ask where a line is rather than what it says. |
 | 0.7.1 | Boot entries under **Fedora's GRUB**, which had only been reasoned about before: `grubby` lists them, the kernel command line carries `rd.luks.uuid` and `rootflags` correctly, and the default boot is unaffected because `GRUB_DEFAULT=saved` records the entry by id rather than position. On a VM whose `/boot` is a btrfs subvolume rather than a partition, the entry hung GRUB outright with no message - the kernel path was right by the specification and wrong for that machine - which is what 0.7.1 fixes. |
 
 ## Development
@@ -463,7 +472,9 @@ data/
 man/btrfs-patrol.8              manual page
 packaging/btrfs-patrol.spec     RPM spec for Fedora / COPR
 packaging/RELEASE.md            how a release is cut: version, tag, COPR, GitHub
-docs/tui-design.md              the planned terminal interface
+docs/tui-design.md              the terminal interface's design
+docs/tui.svg                    the picture of it in this README
+tools/tui-preview.py            draws that picture from the view model
 tests/                          unittest suite (test_man.py keeps the manual in step)
   check-convert.sh              end-to-end check for convert; needs root and a btrfs /
 ```
