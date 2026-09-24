@@ -475,5 +475,36 @@ class ChromeHeightTests(unittest.TestCase):
         self.assertFalse([line for line in view.render() if set(line) == {"\u2500"}])
 
 
+class BottomTests(unittest.TestCase):
+    """The bands belong at the edges of the terminal, whatever the list holds.
+
+    A store with one snapshot drew the key bar across the seventh line with the
+    desktop showing beneath it. Found in a screenshot, not in a test, because
+    every test until now asked what the lines SAID and none asked where they
+    were.
+    """
+
+    def test_the_key_bar_is_the_last_line_whatever_the_list_holds(self):
+        for count in (0, 1, 3, 40):
+            with self.subTest(count=count):
+                view = screen([snap(i, day=1 + i % 28) for i in range(1, count + 1)], height=20)
+                lines = view.render()
+                self.assertEqual(len(lines), 20)
+                self.assertIn("quit", lines[-1])
+
+    def test_a_kept_snapshot_paints_a_whole_row(self):
+        """The ID cell of a kept snapshot begins with an empty span.
+
+        tui._paint stopped at the first empty span, so every kept snapshot was
+        a blank line on screen while its text was perfectly correct here. The
+        view model cannot catch that - this pins the shape that triggered it so
+        the painter's own test has something to aim at.
+        """
+        spans = screen([snap(1, keep=True, description="x")]).table_styled()[1].spans
+        self.assertIn("", [span.text for span in spans])
+        self.assertIn("*", [span.text for span in spans])
+        self.assertTrue("".join(span.text for span in spans).strip().endswith("x"))
+
+
 if __name__ == "__main__":
     unittest.main()

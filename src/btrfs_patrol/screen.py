@@ -422,7 +422,16 @@ class Screen:
         # rule() stays: the full-screen pages still use one under their
         # heading, where there is no band to do the same job.
         lines = [self.title_styled()]
-        lines.extend(self.table_styled())
+        table = self.table_styled()
+        lines.extend(table)
+        # THE TABLE KEEPS ITS ROWS EVEN WHEN IT HAS NOTHING TO PUT IN THEM, so
+        # the detail and the key band sit at the bottom of the terminal rather
+        # than wherever the list happens to end. Without this a store with one
+        # snapshot drew a key bar across the seventh line of the screen with
+        # the wallpaper showing under it - the regions were right, their
+        # position was not.
+        blanks = self.rows_available - (len(table) - 1)
+        lines.extend(StyledLine() for _ in range(max(blanks, 0)))
         lines.extend(self.detail_styled())
         lines.append(self.key_styled())
         return self._clip_all(lines)

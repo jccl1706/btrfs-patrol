@@ -615,8 +615,18 @@ def _paint(window: "curses._CursesWindow", screen: Screen, palette: Palette) -> 
         limit = max(width - 1 if row == height - 1 else width, 0)
         column = 0
         for span in line.spans:
-            if column >= limit or not span.text:
+            if column >= limit:
                 break
+            if not span.text:
+                # CONTINUE, NOT BREAK. An empty span is ordinary: the ID cell of
+                # a kept snapshot splits into the padding before the '*', the
+                # '*' itself and the digits after it, and when the number is
+                # wide enough to leave no padding the first of those is "".
+                # Breaking there painted the cursor's marker and abandoned the
+                # rest of the row - every kept snapshot rendered as a blank
+                # line, which is how it was found: a screenshot of a store whose
+                # only snapshot was kept.
+                continue
             window.addnstr(row, column, span.text, limit - column,
                            palette.attr(span.ink, span.bold, line))
             column += display_width(span.text)
