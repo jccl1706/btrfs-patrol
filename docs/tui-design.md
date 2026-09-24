@@ -70,18 +70,29 @@ something. `btrfs-patrol list` stays the unprivileged way to look.
 Four regions, top to bottom. Shown at 80 columns, the narrowest supported:
 
 ```
-btrfs-patrol                                    subvolume: root
-───────────────────────────────────────────────────────────────
+ btrfs-patrol                                   subvolume: root     <- band
   ID  DATE        TIME      KIND      DESCRIPTION
    1  2026-09-15  11:10:18  manual    before the new kernel
    2  2026-09-16  11:02:10  dnf-pre   upgrade kernel-core +12
-▸  3  2026-09-16  11:10:14  rollback  state before rollback to 2
-───────────────────────────────────────────────────────────────
+▸  3  2026-09-16  11:10:14  rollback  state before rollback to 2    <- highlighted
 #3 root · keep · 1.2 GiB exclusive · boot entry present
 state before rollback to 2
-───────────────────────────────────────────────────────────────
-↑↓ move  ⇥ subvolume  ⏎ open  k keep  x delete  q quit
+ ↑↓ move  ⇥ subvolume  ⏎ open  k keep  x delete  q quit             <- band
 ```
+
+**No rules between the regions**, since the colour arrived. The title and the
+keys are bands, which is a stronger edge than a line of `─`, and the detail is
+told from the table by sitting under it and being inked differently. The three
+rules cost three of the twenty-odd rows a terminal has to repeat what the
+colour already says. `rule()` remains for the full-screen pages, where a
+heading has no band under it.
+
+That change is also what fixed a miscount: `CHROME_HEIGHT` was 6 against a
+render of 8, so a list long enough to fill the screen pushed the key bar past
+the window and `_paint` truncated it. The bar was missing on every terminal
+with more snapshots than rows, and looked like a design rather than an
+arithmetic error. It is now 5 and equal to what the renderer emits, with tests
+that render at five heights and count.
 
 - **Title**, one line: the program, and which subvolume is being shown.
 - **Table**, taking whatever height is left. The same columns `list` prints, so

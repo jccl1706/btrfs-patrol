@@ -43,8 +43,21 @@ from .snapshots import Snapshot
 #: Rows the table needs before it is worth drawing at all: a header and one row.
 MIN_ROWS = 2
 
-#: The title, the two rules around the detail, the detail, and the key bar.
-CHROME_HEIGHT = 6
+#: Everything on the screen that is not a table row: the title band, the
+#: table's own header, the two detail lines and the key band.
+#:
+#: IT MUST MATCH WHAT render() ACTUALLY PRODUCES, and it did not. The value was
+#: 6 while the render emitted 8 - a title, three rules, a header, two detail
+#: lines and the key bar - so a list long enough to fill the screen pushed the
+#: last two lines past the window, and tui._paint truncated them. The key bar
+#: was simply absent on any terminal with more snapshots than rows, which is
+#: every machine that has been running this for a while, and it looked like a
+#: deliberately bare screen rather than a miscount.
+#:
+#: Found by rendering at a known height and counting; there is now a test that
+#: does exactly that for a range of sizes, because this number cannot be
+#: checked by reading it.
+CHROME_HEIGHT = 5
 
 #: Shown in the subvolume cycle to mean "no filter".
 ALL = "all"
@@ -400,11 +413,17 @@ class Screen:
             return self._clip_all(self._page(self.detail_page()))
         if self.mode is Mode.PAGE:
             return self._clip_all(self._page(self.page_body()))
-        lines = [self.title_styled(), self.rule_styled()]
+        # NO RULES BETWEEN THE REGIONS. The title and the keys are bands now,
+        # which is a stronger edge than a line of ─ ever was, and the detail is
+        # told from the table by being under it and differently inked. Three
+        # rules cost three of the twenty-odd rows a terminal has, to repeat
+        # what the colour already says.
+        #
+        # rule() stays: the full-screen pages still use one under their
+        # heading, where there is no band to do the same job.
+        lines = [self.title_styled()]
         lines.extend(self.table_styled())
-        lines.append(self.rule_styled())
         lines.extend(self.detail_styled())
-        lines.append(self.rule_styled())
         lines.append(self.key_styled())
         return self._clip_all(lines)
 

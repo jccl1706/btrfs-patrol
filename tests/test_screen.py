@@ -409,14 +409,14 @@ class StyleTests(unittest.TestCase):
 
     def test_a_kept_snapshot_marks_its_asterisk(self):
         view = screen([snap(1, keep=True)])
-        row = view.render_styled()[3]
+        row = view.table_styled()[1]
         self.assertIn(Ink.OK, self.inks(row, "*"))
         # And the asterisk is still there for a terminal with no colour at all.
         self.assertIn("*1", row.text)
 
     def test_a_rollback_kind_is_warned_about_and_a_timer_is_not(self):
         view = screen([snap(1, kind="rollback"), snap(2, kind="timer")])
-        rows = view.render_styled()[3:5]
+        rows = view.table_styled()[1:3]
         self.assertIn(Ink.WARNING, self.inks(rows[0], "rollback"))
         self.assertIn(Ink.DIM, self.inks(rows[1], "timer"))
 
@@ -437,6 +437,42 @@ class StyleTests(unittest.TestCase):
         view = screen([snap(1, description="x" * 200)], width=40)
         for line in view.render_styled():
             self.assertLessEqual(display_width(line.text), 40)
+
+
+class ChromeHeightTests(unittest.TestCase):
+    """CHROME_HEIGHT has to equal what render() really emits.
+
+    It was 6 against a render of 8, so a list long enough to fill the screen
+    pushed the key bar off the bottom and tui._paint truncated it - invisible on
+    a short list, which is every test that had been written. These count.
+    """
+
+    def screens(self):
+        many = [snap(i, day=1 + i % 28) for i in range(1, 60)]
+        for height in (8, 12, 20, 24, 50):
+            yield height, screen(many, height=height)
+
+    def test_a_full_screen_is_never_taller_than_the_window(self):
+        for height, view in self.screens():
+            with self.subTest(height=height):
+                self.assertLessEqual(len(view.render()), height)
+
+    def test_the_key_bar_survives_a_list_that_fills_the_screen(self):
+        for height, view in self.screens():
+            with self.subTest(height=height):
+                painted = view.render()[:height]      # what tui._paint keeps
+                self.assertTrue(any("quit" in line for line in painted))
+
+    def test_the_table_takes_every_row_that_is_left(self):
+        for height, view in self.screens():
+            with self.subTest(height=height):
+                # One line each for the title, the header, the two detail lines
+                # and the keys; everything else is a row.
+                self.assertEqual(len(view.render()), min(view.rows_available + 5, height))
+
+    def test_no_rules_between_the_regions(self):
+        view = screen([snap(1)])
+        self.assertFalse([line for line in view.render() if set(line) == {"\u2500"}])
 
 
 if __name__ == "__main__":
