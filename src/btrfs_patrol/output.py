@@ -13,6 +13,28 @@ from typing import TextIO
 from btrfs_patrol.snapshots import Snapshot
 
 GAP = "  "
+
+#: Extra space before DESCRIPTION, on top of GAP.
+#:
+#: The fixed columns are all short and of a known shape - an id, a date, a
+#: kernel version - and two spaces tell them apart well enough. DESCRIPTION is
+#: free text of any length, so it reads as a block rather than a column, and at
+#: two spaces it crowds whatever KIND happens to be: "rollback" fills that
+#: column exactly, leaving the longest word in the table hard against a
+#: sentence. Four is the width at which the last column stops looking like a
+#: continuation of the one before it.
+#:
+#: Counted in indent too, or wrapped description lines would sit left of the
+#: text they continue.
+#:
+#: ONE SPACE AND NOT TWO, which is arithmetic rather than taste. At exactly 80
+#: columns - the width everything here is measured at - the table fits ID,
+#: DATE, TIME, KERNEL and KIND with 21 columns left for the description. Two
+#: extra spaces leave 19, under MIN_DESCRIPTION_WIDTH, so layout() drops KERNEL
+#: to make room and an 80-column `list` silently loses a column to make a gap
+#: wider. One space leaves exactly 20 and changes nothing but the gap.
+DESCRIPTION_GAP = " "
+
 MIN_DESCRIPTION_WIDTH = 20
 
 
@@ -179,7 +201,7 @@ class TableLayout:
     @property
     def indent(self) -> int:
         """Where the DESCRIPTION column starts."""
-        return sum(self.widths) + len(GAP) * len(self.widths)
+        return sum(self.widths) + len(GAP) * len(self.widths) + len(DESCRIPTION_GAP)
 
     def header(self) -> str:
         return self.cells(self.headers) + "DESCRIPTION"
@@ -198,6 +220,9 @@ class TableLayout:
         # IDs are right-aligned so the '*' marker sits next to the number.
         parts = [pad(values[0], self.widths[0], right=True) + GAP]
         parts.extend(pad(value, w) + GAP for value, w in zip(values[1:], self.widths[1:]))
+        # On the last cell, so a caller colouring the columns cannot leave the
+        # gap inked as KIND.
+        parts[-1] += DESCRIPTION_GAP
         return parts
 
     def row(self, snapshot: Snapshot) -> str:
@@ -252,7 +277,7 @@ def layout(snapshots: Sequence[Snapshot], width: int, show_subvolume: bool = Fal
             max([display_width(header), *(display_width(_value(s, header)) for s in snapshots)])
             for header in headers
         )
-        indent = sum(widths) + len(GAP) * len(widths)
+        indent = sum(widths) + len(GAP) * len(widths) + len(DESCRIPTION_GAP)
         if width - indent >= MIN_DESCRIPTION_WIDTH or droppable == DROPPABLE[-1]:
             return TableLayout(
                 headers=tuple(headers),
