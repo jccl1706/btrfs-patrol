@@ -19,21 +19,22 @@ GAP = "  "
 #: The fixed columns are all short and of a known shape - an id, a date, a
 #: kernel version - and two spaces tell them apart well enough. DESCRIPTION is
 #: free text of any length, so it reads as a block rather than a column, and at
-#: two spaces it crowds whatever KIND happens to be: "rollback" fills that
+#: two spaces it crowded whatever KIND happened to be: "rollback" fills that
 #: column exactly, leaving the longest word in the table hard against a
-#: sentence. Four is the width at which the last column stops looking like a
-#: continuation of the one before it.
+#: sentence.
 #:
-#: Counted in indent too, or wrapped description lines would sit left of the
-#: text they continue.
+#: WHAT IT COSTS, because it is not free. At exactly 80 columns the table fits
+#: ID, DATE, TIME, KERNEL and KIND with 21 columns left for the description;
+#: these two take it to 19, under MIN_DESCRIPTION_WIDTH, so layout() drops
+#: KERNEL there and gives the description 43 instead. That is the trade, and it
+#: is the one the table already prefers - DROPPABLE puts KERNEL first precisely
+#: because a kernel version rarely identifies a snapshot while a description
+#: usually does. Above 80 columns nothing is lost. A test pins both shapes so
+#: the next person to change this sees the cost rather than discovering it.
 #:
-#: ONE SPACE AND NOT TWO, which is arithmetic rather than taste. At exactly 80
-#: columns - the width everything here is measured at - the table fits ID,
-#: DATE, TIME, KERNEL and KIND with 21 columns left for the description. Two
-#: extra spaces leave 19, under MIN_DESCRIPTION_WIDTH, so layout() drops KERNEL
-#: to make room and an 80-column `list` silently loses a column to make a gap
-#: wider. One space leaves exactly 20 and changes nothing but the gap.
-DESCRIPTION_GAP = " "
+#: Counted in indent too, or a wrapped description's later lines would sit two
+#: columns left of the text they continue.
+DESCRIPTION_GAP = "  "
 
 MIN_DESCRIPTION_WIDTH = 20
 

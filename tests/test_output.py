@@ -7,10 +7,14 @@ from unittest import mock
 from support import make_snapshot
 
 from btrfs_patrol.output import (
+    DESCRIPTION_GAP,
+    GAP,
+    MIN_DESCRIPTION_WIDTH,
     Style,
     color_enabled,
     display_width,
     format_table,
+    layout,
     printable,
     truncate,
     wrap_text,
@@ -26,7 +30,7 @@ class FormatTableTests(unittest.TestCase):
     def setUp(self):
         self.snapshots = [
             make_snapshot(1, description="short", keep=True),
-            make_snapshot(12, kind="dnf-pre", description="x" * 40),
+            make_snapshot(12, kind="dnf-pre", description="x" * 60),
         ]
 
     def test_truncates_descriptions_to_fit(self):
@@ -39,7 +43,7 @@ class FormatTableTests(unittest.TestCase):
         lines = format_table(self.snapshots, Style(False), width=80, wrap=True).splitlines()
         self.assertEqual(len(lines), 4)
         self.assertTrue(all(len(line) <= 80 for line in lines), lines)
-        self.assertEqual(lines[3].strip(), "x" * (40 - len(lines[2].split()[-1])))
+        self.assertEqual(lines[3].strip(), "x" * (60 - len(lines[2].split()[-1])))
 
     def test_marks_kept_snapshots(self):
         lines = format_table(self.snapshots, Style(False), width=80).splitlines()
@@ -74,6 +78,33 @@ class ColorEnabledTests(unittest.TestCase):
             self.assertTrue(color_enabled("auto", FakeTerminal()))
         with mock.patch.dict(os.environ, {"TERM": "xterm", "NO_COLOR": "1"}, clear=True):
             self.assertFalse(color_enabled("auto", FakeTerminal()))
+
+
+class DescriptionGapTests(unittest.TestCase):
+    """The gap before DESCRIPTION, and the column it costs at 80.
+
+    Written down as a test because the trade is invisible in the constant: two
+    spaces of padding decide whether an 80-column table carries KERNEL.
+    """
+
+    def snapshots(self):
+        return [make_snapshot(1, description="short"),
+                make_snapshot(12, kind="dnf-pre", description="x" * 60)]
+
+    def test_kernel_goes_at_eighty_columns_to_pay_for_the_gap(self):
+        table = layout(self.snapshots(), 80)
+        self.assertNotIn("KERNEL", table.headers)
+        self.assertGreaterEqual(table.description_width, MIN_DESCRIPTION_WIDTH)
+
+    def test_nothing_is_lost_once_there_is_room(self):
+        table = layout(self.snapshots(), 88)
+        self.assertIn("KERNEL", table.headers)
+
+    def test_the_gap_is_before_the_description_and_counted_in_the_indent(self):
+        table = layout(self.snapshots(), 100)
+        row = table.row(self.snapshots()[0])
+        self.assertTrue(row.endswith(GAP + DESCRIPTION_GAP))
+        self.assertEqual(len(row), table.indent)
 
 
 if __name__ == "__main__":
