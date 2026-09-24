@@ -10,7 +10,7 @@ from datetime import datetime
 
 from btrfs_patrol import config as config_mod
 from btrfs_patrol.output import display_width
-from btrfs_patrol.screen import ALL, CHROME_HEIGHT, Glyphs, Mode, Screen
+from btrfs_patrol.screen import ALL, CHROME_HEIGHT, Glyphs, Ink, Mode, Screen
 from btrfs_patrol.snapshots import Snapshot
 
 KERNEL = "7.2.4-200.fc44.x86_64"
@@ -364,6 +364,79 @@ class ResizeTests(unittest.TestCase):
         self.assertTrue(lines)
         for line in lines:
             self.assertLessEqual(display_width(line), view.width)
+
+
+class StyleTests(unittest.TestCase):
+    """What the styled renderer marks up, and that it cannot drift from the text.
+
+    Still no curses: these assert on Ink, which is a meaning, not a colour. How
+    a meaning is painted is tui.Palette's business and is covered against a real
+    terminal in test_tui_pty.py.
+    """
+
+    @staticmethod
+    def inks(line, text):
+        """The inks of every span whose text contains `text`."""
+        return [span.ink for span in line.spans if text in span.text]
+
+    def test_the_plain_render_is_exactly_the_spans_joined(self):
+        view = screen([snap(1, keep=True, description="first"), snap(2, kind="rollback")])
+        self.assertEqual(
+            view.render(),
+            [line.text for line in view.render_styled()],
+        )
+
+    def test_every_mode_renders_both_ways_the_same(self):
+        view = screen([snap(1, description="a")])
+        for mode in (Mode.BROWSE, Mode.HELP, Mode.DETAIL, Mode.CONFIRM, Mode.INPUT):
+            with self.subTest(mode=mode):
+                view.mode = mode
+                self.assertEqual(view.render(), [l.text for l in view.render_styled()])
+
+    def test_the_cursor_row_is_the_highlighted_one(self):
+        view = screen([snap(1), snap(2), snap(3)])
+        view.move(1)
+        rows = [line for line in view.render_styled() if line.highlight]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("2", rows[0].text)
+
+    def test_the_bands_are_the_title_and_the_keys(self):
+        view = screen([snap(1)])
+        bars = [line.text for line in view.render_styled() if line.bar]
+        self.assertEqual(len(bars), 2)
+        self.assertIn("btrfs-patrol", bars[0])
+        self.assertIn("quit", bars[-1])
+
+    def test_a_kept_snapshot_marks_its_asterisk(self):
+        view = screen([snap(1, keep=True)])
+        row = view.render_styled()[3]
+        self.assertIn(Ink.OK, self.inks(row, "*"))
+        # And the asterisk is still there for a terminal with no colour at all.
+        self.assertIn("*1", row.text)
+
+    def test_a_rollback_kind_is_warned_about_and_a_timer_is_not(self):
+        view = screen([snap(1, kind="rollback"), snap(2, kind="timer")])
+        rows = view.render_styled()[3:5]
+        self.assertIn(Ink.WARNING, self.inks(rows[0], "rollback"))
+        self.assertIn(Ink.DIM, self.inks(rows[1], "timer"))
+
+    def test_an_error_message_is_inked_differently_from_a_result(self):
+        view = screen([snap(1)])
+        view.report("took snapshot 4")
+        self.assertIn(Ink.OK, self.inks(view.detail_styled()[0], "took"))
+        view.fail("no such snapshot")
+        self.assertIn(Ink.ERROR, self.inks(view.detail_styled()[0], "no such"))
+
+    def test_keys_are_accented_and_their_meanings_are_not(self):
+        line = screen([snap(1)]).key_styled()
+        accented = [span.text for span in line.spans if span.ink is Ink.ACCENT]
+        self.assertIn("q", accented)
+        self.assertNotIn(" quit", accented)
+
+    def test_clipping_a_styled_line_keeps_it_within_the_width(self):
+        view = screen([snap(1, description="x" * 200)], width=40)
+        for line in view.render_styled():
+            self.assertLessEqual(display_width(line.text), 40)
 
 
 if __name__ == "__main__":

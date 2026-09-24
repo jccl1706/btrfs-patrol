@@ -185,10 +185,20 @@ class TableLayout:
         return self.cells(self.headers) + "DESCRIPTION"
 
     def cells(self, values: Sequence[str]) -> str:
+        return "".join(self.cell_parts(values))
+
+    def cell_parts(self, values: Sequence[str]) -> list[str]:
+        """The same cells, one string each, so a caller can colour them apart.
+
+        Joining these is exactly `cells()` - each part carries its own trailing
+        GAP - and that is the point: the TUI paints one attribute per column
+        without a second idea of where the columns are, which is the mistake
+        this class exists to prevent.
+        """
         # IDs are right-aligned so the '*' marker sits next to the number.
-        first = pad(values[0], self.widths[0], right=True)
-        rest = (pad(value, w) for value, w in zip(values[1:], self.widths[1:]))
-        return GAP.join([first, *rest]) + GAP
+        parts = [pad(values[0], self.widths[0], right=True) + GAP]
+        parts.extend(pad(value, w) + GAP for value, w in zip(values[1:], self.widths[1:]))
+        return parts
 
     def row(self, snapshot: Snapshot) -> str:
         """The row's fixed columns, without the description."""

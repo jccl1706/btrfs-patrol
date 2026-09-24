@@ -176,11 +176,43 @@ like the first time either changes.
 
 ### Colour
 
-`Style` emits ANSI escapes; curses wants attributes, so the TUI cannot use it
-directly. It defines colour pairs with the same *meaning* — dim, accent,
-warning, error — and honours the same `--color`/`output.color` setting, with
-`never` giving a monochrome screen that still distinguishes the cursor by the
-`▸` marker rather than by colour alone.
+**Done.** `Style` emits ANSI escapes; curses wants attributes, so the TUI cannot
+use it directly. `screen.Ink` is the shared vocabulary instead — `DIM`,
+`ACCENT`, `HEADING`, `WARNING`, `ERROR`, `OK` — and `tui.Palette` is the only
+thing that knows what any of them look like.
+
+`Screen.render_styled()` is now the renderer, and `render()` joins its spans, so
+the plain screen and the coloured one cannot disagree — the same reason
+`output.TableLayout` exists rather than two layouts. Columns are inked through
+`TableLayout.cell_parts()` rather than by counting characters, so the colours
+cannot drift out of step with the widths the table chose.
+
+What it paints:
+
+| | |
+| --- | --- |
+| title, key bar | a band across the width: white on blue, or reverse video with no colour |
+| the cursor's row | a shade off the background at 256 colours, reverse video below that |
+| `KIND` | `rollback` warned, the `dnf-` kinds accented, `timer` dim |
+| the `*` on a kept snapshot | green, *as well as* the asterisk, never instead |
+| a message | green for a result, red for a failure |
+| keys | the key accented, what it does dim |
+
+`never` gives a monochrome screen that still tells the cursor by its `▸`, the
+bands by reverse video and the header by `A_DIM` — nothing here is
+distinguished by colour alone, which is what makes `never` a usable setting
+rather than a broken one.
+
+Two things worth knowing, both found by testing against a real pseudo-terminal:
+
+- **The setting comes from the `Console`, not from `config.color`.** `--color`
+  overrides the console cli.main builds and leaves `config.color` alone, so
+  reading the configuration would accept the flag and ignore it.
+- **A curses screen always emits some colour.** `curses.wrapper` calls
+  `start_color()` itself, so ncurses sets pair 0 and emits `\x1b[37m\x1b[40m`
+  before this program paints anything. A test that asserts `never` produces no
+  colour escape at all is testing ncurses' startup; the assertion is that no
+  colour is *chosen*.
 
 ## State that changes underneath
 

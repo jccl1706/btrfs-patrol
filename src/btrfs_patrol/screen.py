@@ -30,6 +30,7 @@ from .config import Config, ROOT
 from .errors import PatrolError
 from .output import (
     MIN_DESCRIPTION_WIDTH,
+    columns,
     display_width,
     layout,
     printable,
@@ -69,6 +70,66 @@ class Mode(Enum):
 
     PAGE = "page"
     """A full-screen page - a rollback plan - waiting for an answer."""
+
+
+class Ink(Enum):
+    """What a piece of text MEANS, not what colour it is.
+
+    The curses layer decides how each of these is painted, and on a terminal
+    with no colour they all come out plain - which is why nothing here is
+    distinguished by colour ALONE. The cursor keeps its marker, kept snapshots
+    keep their asterisk, errors keep the word.
+    """
+
+    PLAIN = "plain"
+    DIM = "dim"
+    """Present but not the point: rules, the header row, a kernel version."""
+    ACCENT = "accent"
+    """Where the eye should go: the cursor, a key you can press, a filter."""
+    HEADING = "heading"
+    WARNING = "warning"
+    ERROR = "error"
+    OK = "ok"
+
+
+#: How each snapshot kind is inked in the KIND column. A rollback is the one
+#: worth spotting in a list - it is the state a machine was in before someone
+#: undid it - and the dnf kinds are the ones there are most of.
+KIND_INK = {
+    "rollback": Ink.WARNING,
+    "dnf-pre": Ink.ACCENT,
+    "dnf-post": Ink.ACCENT,
+    "timer": Ink.DIM,
+}
+
+
+@dataclass(frozen=True)
+class Span:
+    """A run of text with one meaning."""
+
+    text: str
+    ink: Ink = Ink.PLAIN
+    bold: bool = False
+
+
+@dataclass(frozen=True)
+class StyledLine:
+    """One line of the screen: its spans, and what the whole row does.
+
+    `bar` and `highlight` are row-wide because they are BACKGROUNDS - the title
+    and the key line are bands across the terminal, and the cursor's row is a
+    band the width of the window. The painter fills the rest of the row; the
+    text here stays exactly what the plain renderer produces, so a test can
+    still assert on strings.
+    """
+
+    spans: tuple[Span, ...] = ()
+    bar: bool = False
+    highlight: bool = False
+
+    @property
+    def text(self) -> str:
+        return "".join(span.text for span in self.spans)
 
 
 @dataclass(frozen=True)
@@ -322,20 +383,74 @@ class Screen:
     # --- rendering --------------------------------------------------------
 
     def render(self) -> list[str]:
-        """Every line of the screen, in order, padded to nothing wider than `width`."""
+        """Every line of the screen, in order, padded to nothing wider than `width`.
+
+        THE STYLED RENDERER IS THE SOURCE OF TRUTH and this joins its spans. A
+        second pass that built the strings separately is how the plain and the
+        coloured screen come to disagree the first time either changes - the
+        same reason output.TableLayout exists rather than two layouts.
+        """
+        return [line.text for line in self.render_styled()]
+
+    def render_styled(self) -> list[StyledLine]:
+        """Every line of the screen, with what each run of text means."""
         if self.mode is Mode.HELP:
-            return self._fit(self.help_lines())
+            return self._clip_all(self._page(self.help_lines()))
         if self.mode is Mode.DETAIL:
-            return self._fit(self.detail_page())
+            return self._clip_all(self._page(self.detail_page()))
         if self.mode is Mode.PAGE:
-            return self._fit(self.page_body())
-        lines = [self.title_line(), self.rule()]
-        lines.extend(self.table_lines())
-        lines.append(self.rule())
-        lines.extend(self.detail_lines())
-        lines.append(self.rule())
-        lines.append(self.key_line())
-        return self._fit(lines)
+            return self._clip_all(self._page(self.page_body()))
+        lines = [self.title_styled(), self.rule_styled()]
+        lines.extend(self.table_styled())
+        lines.append(self.rule_styled())
+        lines.extend(self.detail_styled())
+        lines.append(self.rule_styled())
+        lines.append(self.key_styled())
+        return self._clip_all(lines)
+
+    def _page(self, lines: Sequence[str]) -> list[StyledLine]:
+        """A full-screen page, inked by shape: a heading, warnings, the rest.
+
+        These pages are written as plain text - a help list, a rollback plan -
+        and reading their shape back is enough. Marking up every line of them by
+        hand would be a second copy of the page to keep in step.
+        """
+        out: list[StyledLine] = []
+        for index, line in enumerate(lines):
+            if index == 0:
+                out.append(StyledLine((Span(line, Ink.HEADING, bold=True),)))
+            elif line and set(line) == {self.glyphs.rule}:
+                out.append(StyledLine((Span(line, Ink.DIM),)))
+            elif line.startswith("warning: "):
+                out.append(StyledLine((Span("warning: ", Ink.WARNING, bold=True),
+                                       Span(line[len("warning: "):], Ink.WARNING))))
+            elif line.strip() in ("any key to go back",) or line.endswith("to go back"):
+                out.append(StyledLine((Span(line, Ink.DIM),)))
+            else:
+                out.append(StyledLine((Span(line),)))
+        return out
+
+    def _clip_all(self, lines: Sequence[StyledLine]) -> list[StyledLine]:
+        return [self._clip(line) for line in lines]
+
+    def _clip(self, line: StyledLine) -> StyledLine:
+        """Truncate a styled line to the width, span by span."""
+        if display_width(line.text) <= self.width:
+            return line
+        spans: list[Span] = []
+        used = 0
+        for span in line.spans:
+            if used >= self.width:
+                break
+            room = self.width - used
+            span_width = display_width(span.text)
+            if span_width <= room:
+                spans.append(span)
+                used += span_width
+            else:
+                spans.append(Span(truncate(span.text, room), span.ink, span.bold))
+                used = self.width
+        return StyledLine(tuple(spans), bar=line.bar, highlight=line.highlight)
 
     def _fit(self, lines: Sequence[str]) -> list[str]:
         return [truncate(line, self.width) for line in lines]
@@ -343,33 +458,77 @@ class Screen:
     def rule(self) -> str:
         return self.glyphs.rule * self.width
 
+    def rule_styled(self) -> StyledLine:
+        return StyledLine((Span(self.rule(), Ink.DIM),))
+
     def title_line(self) -> str:
+        return self.title_styled().text
+
+    def title_styled(self) -> StyledLine:
+        """The top band: the program on the left, what is shown on the right."""
         shown = "all subvolumes" if self.subvolume == ALL else self.subvolume
         left = "btrfs-patrol"
         right = f"subvolume: {shown}"
-        if self.query:
-            right = f"/{self.query}  {right}"
-        gap = self.width - len(left) - len(right)
-        return left + " " * gap + right if gap > 0 else f"{left}  {right}"
+        filter_text = f"/{self.query}  " if self.query else ""
+        gap = self.width - len(left) - len(filter_text) - len(right)
+        spans = [Span(left, Ink.HEADING, bold=True),
+                 Span(" " * gap if gap > 0 else "  ")]
+        # The filter is the one thing on this line that changes what the table
+        # below is showing, so it is the one thing accented.
+        if filter_text:
+            spans.append(Span(filter_text, Ink.ACCENT, bold=True))
+        spans.append(Span(right))
+        return StyledLine(tuple(spans), bar=True)
 
     def table_lines(self) -> list[str]:
+        return [line.text for line in self.table_styled()]
+
+    def table_styled(self) -> list[StyledLine]:
         rows = self.visible
         table = layout(rows, self.width - 2, self.show_subvolume)
-        lines = ["  " + table.header()]
+        lines = [StyledLine((Span("  " + table.header(), Ink.DIM, bold=True),))]
         if not rows:
-            lines.append("  " + (self._empty_reason()))
+            lines.append(StyledLine((Span("  " + self._empty_reason(), Ink.DIM),)))
             return lines
         span = self.rows_available
         for index in range(self.top, min(self.top + span, len(rows))):
             snapshot = rows[index]
+            on_cursor = index == self.cursor
             if snapshot.id == self.marked_id:
                 # The marked snapshot stays visible while the cursor moves away
                 # to find the other one, which is the whole point of marking.
-                marker = f"{self.glyphs.cursor}c" if index == self.cursor else " c"
+                marker = f"{self.glyphs.cursor}c" if on_cursor else " c"
             else:
-                marker = f"{self.glyphs.cursor} " if index == self.cursor else "  "
-            lines.append(marker + table.row(snapshot) + table.description(snapshot))
+                marker = f"{self.glyphs.cursor} " if on_cursor else "  "
+            spans = [Span(marker, Ink.ACCENT, bold=True)]
+            spans.extend(self._cell_spans(table, snapshot))
+            spans.append(Span(table.description(snapshot), Ink.PLAIN if on_cursor else Ink.DIM))
+            lines.append(StyledLine(tuple(spans), highlight=on_cursor))
         return lines
+
+    def _cell_spans(self, table: object, snapshot: Snapshot) -> list[Span]:
+        """One span per column, inked by what the column is.
+
+        Through TableLayout.cell_parts rather than by counting characters, so
+        the colours cannot drift out of step with the widths the table chose.
+        """
+        parts = table.cell_parts(columns(snapshot, table.headers))  # type: ignore[attr-defined]
+        spans: list[Span] = []
+        for header, text in zip(table.headers, parts):  # type: ignore[attr-defined]
+            if header == "ID" and snapshot.keep:
+                # The '*' is what says "kept" on a screen with no colour, so it
+                # is coloured as well rather than instead.
+                star = text.index("*")
+                spans.append(Span(text[:star], Ink.PLAIN))
+                spans.append(Span("*", Ink.OK, bold=True))
+                spans.append(Span(text[star + 1:], Ink.PLAIN))
+            elif header == "KIND":
+                spans.append(Span(text, KIND_INK.get(snapshot.kind, Ink.PLAIN)))
+            elif header in ("TIME", "KERNEL"):
+                spans.append(Span(text, Ink.DIM))
+            else:
+                spans.append(Span(text))
+        return spans
 
     def _empty_reason(self) -> str:
         if self.query:
@@ -379,6 +538,25 @@ class Screen:
         return "no snapshots yet - press n to take one"
 
     def detail_lines(self) -> list[str]:
+        return [line.text for line in self.detail_styled()]
+
+    def detail_styled(self) -> list[StyledLine]:
+        """Two lines: what happened or what is highlighted, then its description."""
+        first, second = self._detail_text()
+        if self.message:
+            ink = Ink.ERROR if self.message_is_error else Ink.OK
+            head = StyledLine((Span(first, ink, bold=True),))
+        elif self.mode is Mode.INPUT:
+            # The typed text is the only live thing on the screen; the prompt
+            # in front of it is not.
+            prompt = f"{self.input_purpose}: "
+            head = StyledLine((Span(prompt, Ink.DIM),
+                               Span(self.input_buffer, Ink.ACCENT, bold=True)))
+        else:
+            head = StyledLine((Span(first, Ink.DIM),))
+        return [head, StyledLine((Span(second),))]
+
+    def _detail_text(self) -> tuple[str, str]:
         """Two lines: the facts that do not fit a column, then the description in full."""
         if self.message:
             first = self.message
@@ -391,7 +569,7 @@ class Screen:
             second = ""
         else:
             second = printable(snapshot.description) if snapshot else ""
-        return [first, second or ""]
+        return first, second or ""
 
     def _facts(self) -> str:
         """The highlighted snapshot's facts, as many as fit.
@@ -432,10 +610,24 @@ class Screen:
         what it does, which is worse than not offering it: the ones kept are
         the ones you cannot work without, and ? still lists them all.
         """
+        return self._join_keys(self._key_pairs())
+
+    def key_styled(self) -> StyledLine:
+        """The bottom band: each key accented, what it does beside it."""
+        spans: list[Span] = []
+        for index, (key, what) in enumerate(self._key_pairs()):
+            if index:
+                spans.append(Span("   "))
+            spans.append(Span(key, Ink.ACCENT, bold=True))
+            spans.append(Span(" " + what, Ink.DIM))
+        return StyledLine(tuple(spans), bar=True)
+
+    def _key_pairs(self) -> list[tuple[str, str]]:
+        """The keys that fit, in the order they are dropped from the right."""
         if self.mode is Mode.CONFIRM:
-            return "y confirm   n cancel"
+            return [("y", "confirm"), ("n", "cancel")]
         if self.mode is Mode.INPUT:
-            return "enter accept   esc cancel"
+            return [("enter", "accept"), ("esc", "cancel")]
         keys = [
             (self.glyphs.arrows, "move"),
             (self.glyphs.tab, "subvol"),
@@ -461,11 +653,11 @@ class Screen:
         keep_last = keys[-2:]
         rest = keys[:-2]
         while rest:
-            line = self._join_keys([*rest, *keep_last])
-            if display_width(line) <= self.width:
-                return line
+            pairs = [*rest, *keep_last]
+            if display_width(self._join_keys(pairs)) <= self.width:
+                return pairs
             rest.pop()
-        return self._join_keys(keep_last)
+        return keep_last
 
     @staticmethod
     def _join_keys(keys: Sequence[tuple[str, str]]) -> str:

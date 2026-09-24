@@ -34,7 +34,8 @@ from .cli import (
 )
 from .config import ROOT
 from .errors import PatrolError
-from .screen import ALL, Glyphs, Mode, Screen
+from .output import display_width
+from .screen import ALL, Glyphs, Ink, Mode, Screen, StyledLine
 from . import diff as diff_mod
 from . import rollback as rollback_mod
 from . import system
@@ -480,12 +481,19 @@ def run(app: App) -> int:
 def _loop(window: "curses._CursesWindow", controller: Controller) -> None:
     curses.curs_set(0)
     window.keypad(True)
+    # FROM THE CONSOLE, NOT FROM config.color. The --color flag overrides the
+    # Console that cli.main builds and leaves config.color alone, so reading the
+    # configuration here would have honoured the file and quietly ignored
+    # `btrfs-patrol --color never tui`. The console has already resolved the
+    # flag, the file, NO_COLOR and whether stdout is a terminal - which it is,
+    # here, or there would be no curses screen to paint.
+    palette = Palette(controller.app.console.style.enabled)
     screen = controller.screen
     running = True
     while running:
         height, width = window.getmaxyx()
         screen.resize(width, height)
-        _paint(window, screen)
+        _paint(window, screen, palette)
         key = window.getch()
         if key == curses.KEY_RESIZE:
             continue
@@ -495,10 +503,108 @@ def _loop(window: "curses._CursesWindow", controller: Controller) -> None:
         running = controller.dispatch(action_for(key, screen.mode), character)
 
 
-def _paint(window: "curses._CursesWindow", screen: Screen) -> None:
+class Palette:
+    """Turns an Ink into a curses attribute, or into nothing.
+
+    WHY NOT output.Style: it emits ANSI escapes, which curses would print
+    literally. This is the same vocabulary - dim, accent, warning, error - and
+    honours the same --color/output.color setting, so a screen and a piped
+    `list` agree about what colour is for even though they cannot share code.
+
+    NOTHING IS DISTINGUISHED BY COLOUR ALONE, which is what makes `never` a
+    usable setting rather than a broken one: the cursor keeps its marker, kept
+    snapshots keep their asterisk, errors keep the word, and the bars keep
+    reverse video.
+    """
+
+    #: Inks that get a colour of their own. PLAIN is the terminal's own.
+    COLORS = {
+        Ink.ACCENT: curses.COLOR_CYAN,
+        Ink.HEADING: curses.COLOR_BLUE,
+        Ink.WARNING: curses.COLOR_YELLOW,
+        Ink.ERROR: curses.COLOR_RED,
+        Ink.OK: curses.COLOR_GREEN,
+    }
+
+    #: 256-colour terminals get a band a couple of shades off the background for
+    #: the cursor's row, which leaves every colour in the row still readable.
+    #: With 8 colours there is no such shade, so the row is reversed instead and
+    #: the span colours are dropped - white on cyan on a reversed row is worse
+    #: than plain.
+    HIGHLIGHT_BG = 237
+
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = False
+        self.shaded = False
+        if not enabled or not curses.has_colors():
+            return
+        curses.start_color()
+        try:
+            # -1 means "whatever the terminal already uses", so a light theme
+            # stays light instead of being forced onto black.
+            curses.use_default_colors()
+        except curses.error:
+            return
+        self.enabled = True
+        self.shaded = curses.COLORS >= 256 and curses.COLOR_PAIRS > len(self.COLORS) * 2 + 4
+        self._pairs: dict[tuple[Ink, bool], int] = {}
+        index = 1
+        for ink, color in self.COLORS.items():
+            curses.init_pair(index, color, -1)
+            self._pairs[(ink, False)] = index
+            index += 1
+            if self.shaded:
+                curses.init_pair(index, color, self.HIGHLIGHT_BG)
+                self._pairs[(ink, True)] = index
+                index += 1
+        if self.shaded:
+            curses.init_pair(index, -1, self.HIGHLIGHT_BG)
+            self._plain_shaded = index
+            index += 1
+        # The bands. White on blue is what a terminal program's title bar has
+        # looked like since before any of this, and it reads on every theme.
+        curses.init_pair(index, curses.COLOR_WHITE, curses.COLOR_BLUE)
+        self._bar = index
+
+    def background(self, line: StyledLine) -> int:
+        """The attribute the rest of the row is filled with."""
+        if line.bar:
+            return curses.color_pair(self._bar) if self.enabled else curses.A_REVERSE
+        if line.highlight:
+            if self.enabled and self.shaded:
+                return curses.color_pair(self._plain_shaded)
+            return curses.A_REVERSE
+        return curses.A_NORMAL
+
+    def attr(self, span_ink: Ink, bold: bool, line: StyledLine) -> int:
+        attr = curses.A_BOLD if bold else curses.A_NORMAL
+        if line.bar:
+            # On the band, emphasis is bold: a second colour on a blue
+            # background is where this stops being readable.
+            return self.background(line) | attr
+        if line.highlight and not (self.enabled and self.shaded):
+            return curses.A_REVERSE | attr
+        if not self.enabled:
+            # A_DIM is the one attribute that survives with no colour at all,
+            # and it is what tells the header row from the rows below it.
+            return (curses.A_DIM if span_ink is Ink.DIM else curses.A_NORMAL) | attr
+        shaded = bool(line.highlight and self.shaded)
+        if span_ink is Ink.DIM:
+            base = curses.color_pair(self._plain_shaded) if shaded else curses.A_NORMAL
+            return base | curses.A_DIM | attr
+        pair = self._pairs.get((span_ink, shaded))
+        if pair is None:
+            pair = self._pairs.get((span_ink, False))
+        if pair is None:
+            base = curses.color_pair(self._plain_shaded) if shaded else curses.A_NORMAL
+            return base | attr
+        return curses.color_pair(pair) | attr
+
+
+def _paint(window: "curses._CursesWindow", screen: Screen, palette: Palette) -> None:
     window.erase()
     height, width = window.getmaxyx()
-    lines = screen.render()[:height]
+    lines = screen.render_styled()[:height]
     for row, line in enumerate(lines):
         # ONLY THE LAST ROW GIVES UP ITS LAST COLUMN. Writing the very bottom
         # right cell advances the cursor off the window, which curses reports as
@@ -506,6 +612,18 @@ def _paint(window: "curses._CursesWindow", screen: Screen) -> None:
         # them - which this did at first - takes a column off every line, and it
         # shows: the title read "subvolume: all subvolume" and the rules came up
         # one short of the screen.
-        limit = width - 1 if row == height - 1 else width
-        window.addnstr(row, 0, line, max(limit, 0))
+        limit = max(width - 1 if row == height - 1 else width, 0)
+        column = 0
+        for span in line.spans:
+            if column >= limit or not span.text:
+                break
+            window.addnstr(row, column, span.text, limit - column,
+                           palette.attr(span.ink, span.bold, line))
+            column += display_width(span.text)
+        # THE BANDS AND THE CURSOR'S ROW RUN TO THE EDGE. Without this the
+        # title's colour would stop where its text does and the bar would look
+        # like a coloured word rather than a band.
+        if (line.bar or line.highlight) and column < limit:
+            window.addnstr(row, column, " " * (limit - column), limit - column,
+                           palette.background(line))
     window.refresh()
