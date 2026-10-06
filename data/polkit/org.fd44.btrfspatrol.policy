@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>btrfs-patrol</vendor>
+  <vendor_url>https://github.com/jccl1706/btrfs-patrol</vendor_url>
+
+  <!--
+    EVERY ACTION HERE STILL REQUIRES AN ADMINISTRATOR. What these add is
+    auth_admin_keep, so the answer is remembered for a few minutes: taking three
+    snapshots in a row should not mean typing a password three times. That is
+    what every other system tool does, and it is the whole of what this file
+    changes. Without it each action prompts separately, which is only tiring,
+    not safer.
+
+    READING IS DELIBERATELY ABSENT. An action that lets an active session run
+    something as root with no password at all is a different kind of decision,
+    and this file does not make it: listing snapshots goes on asking.
+  -->
+
+  <action id="org.fd44.btrfspatrol.manage">
+    <description>Manage btrfs snapshots</description>
+    <message>Authentication is required to manage snapshots</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/btrfs-patrol</annotate>
+  </action>
+
+  <action id="org.fd44.btrfspatrol.configure">
+    <description>Change btrfs-patrol's configuration</description>
+    <message>Authentication is required to change the configuration</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/btrfs-patrol-gui-write-config</annotate>
+  </action>
+</policyconfig>

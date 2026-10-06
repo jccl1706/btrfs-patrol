@@ -22,10 +22,27 @@ classifiers = [
 
 [project.scripts]
 btrfs-patrol = "btrfs_patrol.cli:main"
+# Run through pkexec by the settings page to change the configuration, which is
+# root's file. It imports nothing but btrfs_patrol.config, so it costs the
+# command line tool nothing, and it is packaged with the GUI subpackage.
+btrfs-patrol-gui-write-config = "btrfs_patrol.gui.confwrite:main"
+# Reads the root-only snapshot store and prints metadata as JSON, so the window
+# can show a list without running as root itself. Takes no arguments at all.
+btrfs-patrol-gui-read = "btrfs_patrol.gui.readinfo:main"
+
+# THE GUI IS OPTIONAL AND SEPARATE ON PURPOSE. The command line tool has no
+# runtime dependencies at all, which is a feature on a machine you are repairing;
+# PySide6 is tens of megabytes of Qt. So the front end is an extra rather than a
+# requirement, and packaging should carry it as its own subpackage.
+[project.optional-dependencies]
+gui = ["PySide6"]
+
+[project.gui-scripts]
+btrfs-patrol-gui = "btrfs_patrol.gui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 # Read by config.example_text(); setup writes it as the starting configuration.
-btrfs_patrol = ["config.toml.example"]
+btrfs_patrol = ["config.toml.example", "gui/qml/*.qml"]

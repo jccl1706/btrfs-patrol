@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Btrfs Patrol
+GenericName=Snapshot Manager
+Comment=Browse btrfs snapshots and take new ones
+Exec=btrfs-patrol-gui
+# A stock Breeze name until the application has an icon of its own, so the
+# launcher shows something sensible rather than a blank square.
+Icon=drive-harddisk
+Terminal=false
+Categories=System;Filesystem;Qt;KDE;
+Keywords=btrfs;snapshot;rollback;backup;
+StartupNotify=true
