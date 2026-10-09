@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"
+     role="img" aria-label="btrfs-patrol: a badge inside a rewind arc">
+  <!-- Concept 1: the patrol badge, rimmed by the rollback it can perform.
+       Palette is the TUI's: cyan #4fd2fd, dark #1e1e1e.
+
+       THE ARC'S FLAGS ARE NOT INTERCHANGEABLE. An earlier attempt moved the end
+       points and flipped the sweep flag to tidy the gap, and the ring collapsed
+       to a fragment - large-arc and sweep decide WHICH of the four arcs between
+       two points is drawn, so changing an endpoint without re-deriving them does
+       not adjust the shape, it picks a different one. -->
+  <title>btrfs-patrol</title>
+
+  <g fill="none" stroke="#4fd2fd" stroke-width="16" stroke-linecap="butt">
+    <path d="M 196 72 A 92 92 0 1 0 214 128"/>
+  </g>
+  <!-- The head sits on the arc's end point, pointing the way the stroke travels. -->
+  <path d="M 214 98 L 232 134 L 196 134 Z" fill="#4fd2fd"/>
+
+  <path d="M 74 76 H 182 V 140 Q 182 178 128 202 Q 74 178 74 140 Z" fill="#4fd2fd"/>
+  <text x="128" y="146" text-anchor="middle" fill="#1e1e1e"
+        font-family="JetBrains Mono, DejaVu Sans Mono, monospace"
+        font-size="33" font-weight="700" letter-spacing="-1.5">btrfs</text>
+</svg>

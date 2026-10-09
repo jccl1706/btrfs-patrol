@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- btrfs-patrol, option A: snapshots as a stack of plates, with the rollback
+       as a Breeze-style badge. Drawn to Breeze's conventions rather than to a
+       logo's: 48px grid, vertical gradients light at the top, and the paired
+       tones its own app icons use. -->
+  <defs>
+    <linearGradient id="plate" x1="0" x2="0" y1="42" y2="8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#98a7b0" offset="0"/><stop stop-color="#dde1e3" offset="1"/>
+    </linearGradient>
+    <linearGradient id="plateBack" x1="0" x2="0" y1="30" y2="6" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7f8c8d" offset="0"/><stop stop-color="#afb0b3" offset="1"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" x2="0" y1="46" y2="28" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1190d9" offset="0"/><stop stop-color="#73c4ef" offset="1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Two plates behind, receding: the snapshots already taken. -->
+  <rect x="11" y="7"  width="26" height="7" rx="2" fill="url(#plateBack)" opacity=".55"/>
+  <rect x="8.5" y="12" width="31" height="8" rx="2" fill="url(#plateBack)" opacity=".8"/>
+  <!-- The live subvolume in front. -->
+  <rect x="6" y="18" width="36" height="12" rx="2.5" fill="url(#plate)"/>
+  <!-- Its contents, in the colours the TUI gives each kind of snapshot. -->
+  <rect x="9"  y="21" width="9"  height="6" rx="1" fill="#27ad60"/>
+  <rect x="19" y="21" width="7"  height="6" rx="1" fill="#1190d9"/>
+  <rect x="27" y="21" width="12" height="6" rx="1" fill="#fdad23"/>
+
+  <!-- The rollback, as a badge in the corner the way Breeze marks a state. -->
+  <circle cx="34" cy="37" r="9" fill="url(#blue)"/>
+  <path d="M 34 32.5 a 4.5 4.5 0 1 1 -4.4 5.4" fill="none" stroke="#fcfcfc"
+        stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M 31.4 30.4 L 35.6 32.6 L 31.6 34.9 Z" fill="#fcfcfc"/>
+</svg>

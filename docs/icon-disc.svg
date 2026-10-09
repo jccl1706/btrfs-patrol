@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- btrfs-patrol, option B: the filesystem as a disc, patrolled by a sweep.
+       The arc is a radar sweep rather than an arrow - the tool watches on a
+       schedule and takes a snapshot before every transaction, which is a round
+       rather than an undo. -->
+  <defs>
+    <linearGradient id="disc" x1="0" x2="0" y1="44" y2="4" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#98a7b0" offset="0"/><stop stop-color="#dde1e3" offset="1"/>
+    </linearGradient>
+    <linearGradient id="sweep" x1="0" x2="0" y1="40" y2="8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1190d9" offset="0"/><stop stop-color="#73c4ef" offset="1"/>
+    </linearGradient>
+    <linearGradient id="hub" x1="0" x2="0" y1="30" y2="18" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#27ad60" offset="0"/><stop stop-color="#58d68d" offset="1"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="24" cy="24" r="19" fill="url(#disc)"/>
+  <circle cx="24" cy="24" r="19" fill="none" stroke="#7f8c8d" stroke-width="1" opacity=".5"/>
+
+  <!-- The sweep: a quadrant of the platter lit up, trailing off behind it. -->
+  <path d="M 24 24 L 24 5 A 19 19 0 0 1 41.5 16.6 Z" fill="url(#sweep)" opacity=".92"/>
+  <path d="M 24 24 L 41.5 16.6 A 19 19 0 0 1 43 24 Z" fill="url(#sweep)" opacity=".4"/>
+
+  <!-- Tracks, and the hub where the current state sits. -->
+  <circle cx="24" cy="24" r="13" fill="none" stroke="#fcfcfc" stroke-width="1.2" opacity=".7"/>
+  <circle cx="24" cy="24" r="7.5" fill="none" stroke="#fcfcfc" stroke-width="1.2" opacity=".5"/>
+  <circle cx="24" cy="24" r="4" fill="url(#hub)"/>
+</svg>

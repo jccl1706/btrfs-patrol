@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"
+     role="img" aria-label="btrfs-patrol: a lowercase b whose bowl is a shield">
+  <!-- Concept 5: a lowercase b whose bowl IS the shield. No police cliche, and
+       it survives being 16 pixels wide. One path with evenodd, so the counter is
+       a hole rather than a painted shape and the mark works on any background.
+       The counter is large on purpose - too small and the letter reads as a
+       solid blob with a notch rather than a b. -->
+  <title>btrfs-patrol</title>
+
+  <path fill="#4fd2fd" fill-rule="evenodd" d="
+    M 56 32 h 32 v 80 h 100 v 50 q 0 46 -60 70 q -72 -28 -72 -80 Z
+    M 88 142 v 22 q 0 30 40 48 q 28 -16 28 -44 v -26 Z
+  "/>
+</svg>
